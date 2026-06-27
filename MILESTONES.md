@@ -17,10 +17,6 @@ A prioritized backlog of features to implement, **ordered easiest → hardest** 
 
 Estimates are for the build itself. Anything touching the database ships as a **migration you run in the Supabase SQL Editor** (exactly as Claude provides it).
 
-**Already shipped (foundation in place):**
-- ✅ **Routing / real URLs** — `/post/:id`, `/user/:username`, `/reset-password` all exist now. This unblocks password recovery, share links, and browser back/forward. (Earlier notes calling this the #1 gap are out of date.)
-- ✅ **Mod-actions foundation** — `0007_mod_actions.sql` (pin / remove / re-flair / assign-flair).
-
 ---
 
 ## 0. Next up — agreed features (build in this order)
@@ -143,9 +139,3 @@ Not "missing" — intentionally not built:
 - **Enterprise SSO (SAML/Okta)** — paid B2B feature, irrelevant here. (Social login #18 is the right "SSO.")
 - **Iframe-embedding the community into WordPress** — clunky; cross-linking (#7) is better.
 - **WordPress single sign-on / shared accounts** — tjadaka.com has no user accounts, nothing to sync.
-
----
-
-## Optional: branding
-
-- **`community.tjadaka.com` subdomain** — host the community on a subdomain so both sites feel like one brand. Vercel + DNS change, ~minutes (DNS already on Vercel). Pure ops, no app code.
