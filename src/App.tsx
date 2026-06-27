@@ -9,6 +9,7 @@ import {
 import { useAuth } from "./auth/AuthProvider";
 import { supabase } from "./lib/supabase";
 import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames } from "./lib/api";
+import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -127,7 +128,7 @@ function Vote({ votes, t, targetType, targetId }) {
   );
 }
 
-function ActionPill({ icon, label, t, onClick }) {
+function ActionPill({ icon, label, t, onClick }: any) {
   return <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 6, background: t.pill, color: t.muted,
     border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{icon}{label}</button>;
 }
@@ -484,26 +485,26 @@ function MemberPage({ t, profile, loading, isMe, onOpen, onChat, onRelationshipC
   );
 }
 
-function relBtn(t, active) {
+function relBtn(t, active = false) {
   return { display: "flex", alignItems: "center", gap: 6, background: active ? t.accent : t.panel2, color: active ? t.accentText : t.text, border: `1px solid ${active ? t.accent : t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 };
 }
 
 // ----- App shell -----
 export default function App() {
   const [view, setView] = useState("landing");
-  const [activePost, setActivePost] = useState(null);
+  const [activePost, setActivePost] = useState<UiPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [joined, setJoined] = useState(true);
-  const [mutedUsers, setMutedUsers] = useState([]); // usernames hidden from feed (muted/blocked)
+  const [mutedUsers, setMutedUsers] = useState<string[]>([]); // usernames hidden from feed (muted/blocked)
   const { user, signOut } = useAuth();
 
-  const [feed, setFeed] = useState([]);
-  const [pinned, setPinned] = useState([]);
+  const [feed, setFeed] = useState<UiPost[]>([]);
+  const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState<UiProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [myUsername, setMyUsername] = useState(null);
+  const [myUsername, setMyUsername] = useState<string | null>(null);
 
   const t = view === "member" ? neutral : gold;
 
