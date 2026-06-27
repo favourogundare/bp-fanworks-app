@@ -15,6 +15,9 @@ dist
 dist-ssr
 *.local
 
+# Generated at build time (npm run prebuild)
+public/sitemap.xml
+
 # Local env (keys live here; set the same vars in Vercel's dashboard for production)
 .env
 .env.*
