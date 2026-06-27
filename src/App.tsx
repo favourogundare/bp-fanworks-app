@@ -4,14 +4,14 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, Rocket, LogOut,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -51,9 +51,7 @@ const community = {
   short: "Black Panther Fanworks",
   blurb:
     "A Wakanda-first community for fanfiction, art, music, cosplay, and discussion rooted in the Black Panther MCU films and comics canon. Source your artwork, flair your posts, and engage in good faith. Wakanda Forever.",
-  created: "Feb 16, 2018",
-  visitors: "45K",
-  contributions: "1.2K",
+  created: "Jun 27, 2026",
   bookmarks: ["Wiki", "Fanfic Archive", "Weekly Self-Promo Thread"],
   rules: [
     { title: "Source All Artwork and Scans", desc: "All fanart, cosplay photos, or music must clearly credit the original artist or creator in the post title or a comment. If you are the creator, you may tag it as [OC]." },
@@ -279,7 +277,6 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
           <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 10, color: t.muted, fontSize: 13 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Eye size={15} /> {post.views || "—"} views</span>
             <span style={{ color: t.link, fontWeight: 700, cursor: "pointer" }}>See More Insights</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginLeft: "auto" }}><Rocket size={15} /> Promote</span>
           </div>
         </>
       )}
@@ -304,6 +301,8 @@ function Rule({ rule, index, t, last }) {
 
 // ----- Community sidebar -----
 function CommunitySidebar({ t }) {
+  const [stats, setStats] = useState<{ members: number; contributions: number } | null>(null);
+  useEffect(() => { fetchCommunityStats().then(setStats).catch((e) => console.error("stats load failed", e)); }, []);
   return (
     <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 16 }}>
       <h4 style={{ color: t.heading, fontSize: 15, fontWeight: 800, margin: "0 0 8px" }}>{community.short}</h4>
@@ -314,8 +313,8 @@ function CommunitySidebar({ t }) {
         <BookOpen size={15} /> Community Guide
       </button>
       <div style={{ display: "flex", gap: 24, marginBottom: 18 }}>
-        <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{community.visitors}</div><div style={{ color: t.muted, fontSize: 12 }}>Weekly visitors</div></div>
-        <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{community.contributions}</div><div style={{ color: t.muted, fontSize: 12 }}>Weekly contributions</div></div>
+        <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.members.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Wakandans</div></div>
+        <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.contributions.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Contributions</div></div>
       </div>
       <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>COMMUNITY BOOKMARKS</div>
       {community.bookmarks.map((b) => <div key={b} style={{ background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: "pointer" }}>{b}</div>)}
@@ -517,7 +516,8 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading }
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "20px 0" }}>
-          <div style={{ width: 72, height: 72, borderRadius: "50%", background: "radial-gradient(circle at 35% 30%, #2a2a2e, #050505)", border: `2px solid ${t.accent}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30 }}>🐾</div>
+          <img src="/bpf-home.png" alt={community.name}
+            style={{ width: 72, height: 72, borderRadius: "50%", border: `2px solid ${t.accent}`, objectFit: "cover", flexShrink: 0, display: "block" }} />
           <h1 style={{ color: t.heading, fontSize: 34, fontWeight: 800, margin: 0, letterSpacing: 0.3 }}>{community.name}</h1>
         </div>
         {pinned.length > 0 && (
@@ -720,7 +720,6 @@ function AppLayout() {
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatTarget, setChatTarget] = useState<{ profileId: string; username: string } | null>(null);
-  const [joined, setJoined] = useState(true);
   const [mutedUsers, setMutedUsers] = useState<string[]>([]); // usernames hidden from feed (muted/blocked)
   const { user, signOut } = useAuth();
 
@@ -778,7 +777,6 @@ function AppLayout() {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} /> Create Post</button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
-          <button onClick={() => setJoined(!joined)} style={{ background: joined ? "transparent" : t.accent, color: joined ? t.text : t.accentText, border: `1px solid ${joined ? t.border : t.accent}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13 }}>{joined ? "Joined" : "Join"}</button>
           <button onClick={() => goUser(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
           <button onClick={signOut} title="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
         </div>
