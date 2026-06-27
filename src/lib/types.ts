@@ -22,6 +22,7 @@ export interface UiPost {
   votes: number
   views?: string
   image?: boolean
+  media: string[] // uploaded media URLs (may be empty; demo seed uses placeholders)
   links?: string[]
   pinned: boolean
   commentCount: number
