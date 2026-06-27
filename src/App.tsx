@@ -515,10 +515,10 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading }
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
       <div>
-        <div style={{ padding: "20px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "20px 0" }}>
           <img src="/bpf-home.png" alt={community.name}
-            style={{ width: "100%", borderRadius: 16, border: `1px solid ${t.border}`, display: "block" }} />
-          <h1 style={{ color: t.heading, fontSize: 34, fontWeight: 800, margin: "16px 0 0", letterSpacing: 0.3 }}>{community.name}</h1>
+            style={{ width: 72, height: 72, borderRadius: "50%", border: `2px solid ${t.accent}`, objectFit: "cover", flexShrink: 0, display: "block" }} />
+          <h1 style={{ color: t.heading, fontSize: 34, fontWeight: 800, margin: 0, letterSpacing: 0.3 }}>{community.name}</h1>
         </div>
         {pinned.length > 0 && (
           <>
