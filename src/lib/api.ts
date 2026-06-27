@@ -31,6 +31,89 @@ export function resetProfileCache() {
   cachedProfileId = null
 }
 
+/** The signed-in member's identity for the app shell: profile id, username, mod flag. */
+export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean } | null> {
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth.user) return null
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, username, role')
+    .eq('user_id', auth.user.id)
+    .maybeSingle()
+  if (!data) return null
+  cachedProfileId = data.id
+  return { profileId: data.id, username: data.username, isMod: data.role === 'mod' }
+}
+
+// ----- creating posts, comments, and uploading media -----
+export async function createPost(input: {
+  type: string
+  title: string
+  body: string
+  flairSlugs: string[]
+  media?: string[]
+  surface?: 'community' | 'profile'
+}): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { data: post, error } = await supabase
+    .from('posts')
+    .insert({
+      author_id: me,
+      surface: input.surface ?? 'community',
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      media: input.media ?? [],
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+
+  if (input.flairSlugs?.length) {
+    const { data: flairs } = await supabase
+      .from('flairs')
+      .select('id, slug')
+      .eq('scope', 'post')
+      .in('slug', input.flairSlugs)
+    const rows = (flairs ?? []).map((f: Row) => ({ post_id: post.id, flair_id: f.id }))
+    if (rows.length) {
+      const { error: fErr } = await supabase.from('post_flairs').insert(rows)
+      if (fErr) throw fErr
+    }
+  }
+  return post.id
+}
+
+export async function createComment(input: {
+  postId: string
+  body: string
+  parentId?: string | null
+}): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase.from('comments').insert({
+    post_id: input.postId,
+    author_id: me,
+    parent_id: input.parentId ?? null,
+    body: input.body,
+  })
+  if (error) throw error
+}
+
+/** Upload files to the public post-media bucket; returns their public URLs. */
+export async function uploadMedia(files: File[]): Promise<string[]> {
+  const urls: string[] = []
+  for (const file of files) {
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const path = `${crypto.randomUUID()}-${safe}`
+    const { error } = await supabase.storage.from('post-media').upload(path, file)
+    if (error) throw error
+    urls.push(supabase.storage.from('post-media').getPublicUrl(path).data.publicUrl)
+  }
+  return urls
+}
+
 // ----- voting -----
 type VoteTarget = 'post' | 'comment'
 
@@ -88,6 +171,7 @@ function mapPost(row: Row): UiPost {
     votes: row.vote_score ?? 0,
     views: row.view_count ? formatCount(row.view_count) : undefined,
     image: Array.isArray(row.media) && row.media.length > 0,
+    media: Array.isArray(row.media) ? (row.media as string[]) : [],
     links: Array.isArray(row.links) ? (row.links as string[]) : [],
     pinned: !!row.pinned,
     commentCount: row.comments?.[0]?.count ?? 0,

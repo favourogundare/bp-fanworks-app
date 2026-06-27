@@ -8,10 +8,11 @@ import {
 } from "lucide-react";
 import { useAuth } from "./auth/AuthProvider";
 import { supabase } from "./lib/supabase";
-import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId } from "./lib/api";
+import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -135,9 +136,72 @@ function ActionPill({ icon, label, t, onClick }: any) {
     border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{icon}{label}</button>;
 }
 
+// Themed member flairs (must match the slugs seeded in migration 0001).
+const MEMBER_FLAIRS = [
+  { slug: "dora-milaje", label: "Dora Milaje" },
+  { slug: "wakandan-council", label: "Wakandan Council" },
+  { slug: "jabari", label: "Jabari" },
+  { slug: "outrider", label: "Outrider" },
+  { slug: "wkabi-stan", label: "W'Kabi Stan" },
+];
+
+const isVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
+
+// ----- Media (real uploads + NSFW suppression) -----
+function MediaBlock({ post, t }: any) {
+  const [revealed, setRevealed] = useState(false);
+  const nsfw = post.flairs?.includes("nsfw");
+  const urls = (post.media || []).filter((m: any) => typeof m === "string" && m.startsWith("http"));
+
+  if (urls.length === 0) {
+    // Seeded demo posts carry a non-URL placeholder; show the old gradient box.
+    if (!post.image) return null;
+    return <div style={{ height: 220, borderRadius: 12, marginTop: 8, background: "linear-gradient(135deg,#241f12,#0e0c08)", border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: t.muted }}><ImageIcon size={28} /></div>;
+  }
+  if (nsfw && !revealed) {
+    return (
+      <div onClick={(e) => { e.stopPropagation(); setRevealed(true); }} style={{ height: 220, borderRadius: 12, marginTop: 8, background: t.panel2, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", color: t.muted }}>
+        <Flag size={22} /><div style={{ fontSize: 13, fontWeight: 700 }}>NSFW — click to reveal</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+      {urls.map((u: string, i: number) => isVideo(u)
+        ? <video key={i} src={u} controls muted style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
+        : <img key={i} src={u} alt="" style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
+    </div>
+  );
+}
+
+// ----- Comment composer (reused for top-level + replies) -----
+function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }: any) {
+  const [val, setVal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    const body = val.trim();
+    if (!body) return;
+    setBusy(true);
+    try { await createComment({ postId, body, parentId: parentId ?? null }); setVal(""); onAdded?.(); onCancel?.(); }
+    catch (e) { console.error("comment failed", e); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{ marginTop: 8 }}>
+      <textarea value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder || "Add a comment…"} rows={3}
+        style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+        {onCancel && <button onClick={onCancel} style={{ background: "transparent", color: t.muted, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Cancel</button>}
+        <button onClick={submit} disabled={busy || !val.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "6px 16px", cursor: "pointer", fontSize: 13, fontWeight: 800, opacity: busy || !val.trim() ? 0.6 : 1 }}>{busy ? "Posting…" : "Comment"}</button>
+      </div>
+    </div>
+  );
+}
+
 // ----- Comments -----
-function Comment({ c, t, depth = 0 }) {
+function Comment({ c, t, depth = 0, postId, onAdded }: any) {
   const [collapsed, setCollapsed] = useState(false);
+  const [replying, setReplying] = useState(false);
   return (
     <div style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -154,11 +218,12 @@ function Comment({ c, t, depth = 0 }) {
           <p style={{ fontSize: 14, color: t.text, whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.body}</p>
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
-            <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><MessageCircle size={14} /> Reply</span>
+            <span onClick={() => setReplying(!replying)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><MessageCircle size={14} /> Reply</span>
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Share2 size={14} /> Share</span>
           </div>
-          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} />)}
+          {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
+          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} />)}
         </div>
       )}
     </div>
@@ -188,11 +253,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
         {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-        {post.image && (
-          <div style={{ height: 220, borderRadius: 12, marginTop: 8, background: "linear-gradient(135deg,#241f12,#0e0c08)", border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: t.muted }}>
-            <ImageIcon size={28} />
-          </div>
-        )}
+        <MediaBlock post={post} t={t} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
@@ -269,8 +330,32 @@ const POST_TYPES = [
   { key: "vent", icon: MessageCircle, label: "Vent / Advice", desc: "Personal posts seeking peer support." },
 ];
 
-function CreatePostModal({ t, onClose }) {
+function CreatePostModal({ t, onClose, onCreated }: any) {
   const [sel, setSel] = useState("text");
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [flairs, setFlairs] = useState<string[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleFlair = (k: string) => setFlairs((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
+  const isMedia = sel === "image" || sel === "video";
+
+  const submit = async () => {
+    if (!title.trim()) { setError("Give your post a title."); return; }
+    setBusy(true); setError(null);
+    try {
+      let media: string[] = [];
+      if (files.length) media = await uploadMedia(files);
+      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media });
+      onCreated?.();
+      onClose();
+    } catch (e: any) {
+      setError((e && e.message) || "Couldn't create the post.");
+    } finally { setBusy(false); }
+  };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 560, maxWidth: "100%", maxHeight: "85vh", overflow: "auto", padding: 22 }}>
@@ -289,12 +374,27 @@ function CreatePostModal({ t, onClose }) {
             );
           })}
         </div>
-        <input placeholder="Title" style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" }} />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>{Object.keys(POST_FLAIRS).map((k) => <Flair key={k} flairKey={k} />)}</div>
-        <textarea placeholder="Body text (rich text in the real build)" rows={4} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical" }} />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" }} />
+        <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Flairs (tap to toggle)</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {Object.keys(POST_FLAIRS).map((k) => {
+            const on = flairs.includes(k);
+            return <span key={k} onClick={() => toggleFlair(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} /></span>;
+          })}
+        </div>
+        {isMedia && (
+          <div style={{ marginBottom: 12 }}>
+            <input type="file" accept={sel === "video" ? "video/*" : "image/*"} multiple={sel === "image"}
+              onChange={(e) => setFiles(Array.from(e.target.files || []).slice(0, 20))}
+              style={{ color: t.text, fontSize: 13 }} />
+            {files.length > 0 && <div style={{ color: t.muted, fontSize: 12, marginTop: 4 }}>{files.length} file{files.length > 1 ? "s" : ""} selected</div>}
+          </div>
+        )}
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={4} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical" }} />
+        {error && <div style={{ color: "#e0726b", fontSize: 13, marginTop: 8 }}>{error}</div>}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
           <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
-          <button onClick={onClose} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800 }}>Post</button>
+          <button onClick={submit} disabled={busy} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800, opacity: busy ? 0.6 : 1 }}>{busy ? "Posting…" : "Post"}</button>
         </div>
       </div>
     </div>
@@ -437,7 +537,34 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading }
   );
 }
 
-function PostPage({ post, t, onBack, onAuthor }) {
+function modBtn(t: any) {
+  return { display: "flex", alignItems: "center", gap: 4, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 };
+}
+
+// ----- Moderator action bar (posts) -----
+function ModBar({ post, t, onChanged, onRemoved }: any) {
+  const [reflair, setReflair] = useState(false);
+  const [sel, setSel] = useState<string[]>(post.flairs || []);
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: any) => { setBusy(true); try { await fn(); } catch (e) { console.error("mod action failed", e); } finally { setBusy(false); } };
+  const toggle = (k: string) => setSel((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
+  return (
+    <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 10, margin: "12px 0", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.heading, fontSize: 12, fontWeight: 800 }}><Shield size={13} /> MOD</span>
+      <button onClick={() => run(async () => { await modSetPinned(post.id, !post.pinned); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Pin size={13} /> {post.pinned ? "Unpin" : "Pin"}</button>
+      <button onClick={() => setReflair(!reflair)} style={modBtn(t)}>Re-flair</button>
+      <button onClick={() => { if (window.confirm("Remove this post?")) run(async () => { await modRemovePost(post.id); onRemoved?.(); }); }} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      {reflair && (
+        <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
+          {Object.keys(POST_FLAIRS).map((k) => { const on = sel.includes(k); return <span key={k} onClick={() => toggle(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.5 }}><Flair flairKey={k} /></span>; })}
+          <button onClick={() => run(async () => { await modSetPostFlairs(post.id, sel); setReflair(false); onChanged?.(); })} disabled={busy} style={{ ...modBtn(t), background: t.accent, color: t.accentText }}>Save flairs</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved }: any) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
       <div style={{ paddingTop: 16 }}>
@@ -450,21 +577,24 @@ function PostPage({ post, t, onBack, onAuthor }) {
         <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)}>{post.author}</div>
         <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
-        <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>
+        {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
+        {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
+        <MediaBlock post={post} t={t} />
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0" }}>
           <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
           <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} />
           <ActionPill icon={<Share2 size={15} />} label="Share" t={t} />
         </div>
-        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 999, padding: "12px 16px", color: t.muted, fontSize: 14, marginBottom: 8 }}>Join the conversation</div>
-        <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 8 }}>{(post.comments ?? []).map((c) => <Comment key={c.id} c={c} t={t} />)}</div>
+        {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
+        <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
+        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} />)}</div>
       </div>
       <div><CommunitySidebar t={t} /></div>
     </div>
   );
 }
 
-function MemberPage({ t, profile, loading, isMe, onOpen, onChat, onRelationshipChange }) {
+function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged }: any) {
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
 
@@ -529,6 +659,17 @@ function MemberPage({ t, profile, loading, isMe, onOpen, onChat, onRelationshipC
             )}
           </>
         )}
+        {isMod && (
+          <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 10, marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.heading, fontSize: 12, fontWeight: 800 }}><Shield size={13} /> MOD</span>
+            <span style={{ color: t.muted, fontSize: 12 }}>Member flair:</span>
+            <select defaultValue="" onChange={(e) => { modAssignMemberFlair(profile.id, e.target.value || null).then(() => onProfileChanged?.()).catch((err) => console.error("assign flair failed", err)); }}
+              style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "5px 8px", fontSize: 13 }}>
+              <option value="">— assign flair —</option>
+              {MEMBER_FLAIRS.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
+            </select>
+          </div>
+        )}
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
           {profile.posts.length === 0
             ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
@@ -582,30 +723,28 @@ export default function App() {
   const [profile, setProfile] = useState<UiProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [myUsername, setMyUsername] = useState<string | null>(null);
+  const [myIsMod, setMyIsMod] = useState(false);
 
   const t = view === "member" ? neutral : gold;
 
-  // Resolve the current member's username (for the header avatar + own profile).
+  // Resolve the current member's identity (username, mod flag) for the shell.
   useEffect(() => {
     if (!user?.id) return;
     let active = true;
-    supabase.from("profiles").select("username").eq("user_id", user.id).maybeSingle()
-      .then(({ data }) => { if (active && data) setMyUsername(data.username); });
+    fetchMyIdentity().then((id) => { if (active && id) { setMyUsername(id.username); setMyIsMod(id.isMod); } });
     return () => { active = false; };
   }, [user?.id]);
 
-  // Load the community feed + pinned highlights once.
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const [f, p] = await Promise.all([fetchCommunityFeed(), fetchPinned()]);
-        if (active) { setFeed(f); setPinned(p); }
-      } catch (e) { console.error("feed load failed", e); }
-      finally { if (active) setFeedLoading(false); }
-    })();
-    return () => { active = false; };
-  }, []);
+  // Load the community feed + pinned highlights (callable, so new posts refresh it).
+  const loadFeed = async () => {
+    try {
+      const [f, p] = await Promise.all([fetchCommunityFeed(), fetchPinned()]);
+      setFeed(f); setPinned(p);
+    } catch (e) { console.error("feed load failed", e); }
+    finally { setFeedLoading(false); }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadFeed(); }, []);
 
   // The set of usernames hidden from the feed (people you've muted or blocked).
   const refreshHidden = () => {
@@ -622,6 +761,16 @@ export default function App() {
       setActivePost(full);
     } catch (e) { console.error("post load failed", e); }
   };
+
+  // Re-fetch the open post (after a new comment, vote, or mod re-flair/pin).
+  const reloadPost = async () => {
+    if (!activePost) return;
+    try { setActivePost(await fetchPostWithComments(activePost.id)); }
+    catch (e) { console.error("post reload failed", e); }
+  };
+
+  // After a mod removes the open post: go back to the feed and refresh it.
+  const onPostRemoved = () => { setView("landing"); loadFeed(); };
 
   const openChatWith = (p) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
@@ -653,11 +802,11 @@ export default function App() {
 
       <div style={{ padding: "16px 0 70px" }}>
         {view === "landing" && <LandingPage t={t} posts={feed} pinned={pinned} loading={feedLoading} onOpen={openPost} onAuthor={openAuthor} mutedUsers={mutedUsers} />}
-        {view === "post" && activePost && <PostPage post={activePost} t={t} onBack={() => setView("landing")} onAuthor={openAuthor} />}
-        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} isMe={!!profile && profile.username === myUsername} onOpen={openPost} onChat={openChatWith} onRelationshipChange={refreshHidden} />}
+        {view === "post" && activePost && <PostPage post={activePost} t={t} onBack={() => setView("landing")} onAuthor={openAuthor} isMod={myIsMod} onCommentAdded={reloadPost} onRemoved={onPostRemoved} />}
+        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} isMe={!!profile && profile.username === myUsername} isMod={myIsMod} onOpen={openPost} onChat={openChatWith} onRelationshipChange={refreshHidden} onProfileChanged={() => openAuthor(profile?.username)} />}
       </div>
 
-      {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} />}
+      {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} onCreated={loadFeed} />}
       {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
     </div>
   );
