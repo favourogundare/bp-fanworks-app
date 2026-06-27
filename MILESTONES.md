@@ -1,6 +1,6 @@
 # Feature Milestones — bp-fanworks-app
 
-The feature backlog for the site. **Phase 0** is the agreed next-up work. After that, features are grouped by **theme**; within each theme they're ordered **easiest → hardest**, and every item carries an effort estimate so you can still pick "quick wins first."
+The feature backlog for the site. Features are grouped by **theme**; within each theme they're ordered **easiest → hardest**, and every item carries an effort estimate so you can still pick "quick wins first."
 
 > The site is in active development. This is the working plan, not a commitment to build everything.
 
