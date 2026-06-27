@@ -19,20 +19,6 @@ Anything touching the database ships as a **migration you run in the Supabase SQ
 
 ---
 
-## Phase 0 — Next up (build in this order)
-
-The immediate, agreed items. Build the seed-data feature **first** (it makes the others — like the real stats — meaningful). **We are NOT clearing test/demo data** — we're adding more.
-
-| # | Feature | What it delivers | Effort |
-|---|---------|------------------|--------|
-| A | **Seed a populated community (25+ real accounts)** | At least 25 **real, sign-in-able** accounts, each with posts, comments, and votes. Real auth users → ships as an **admin-API seed script** (`auth.admin.createUser()` + content inserts), not SQL. Emails `test-user-01@bpfanworks.test`…`-25`, shared QA password, emails auto-confirmed. ✅ **Built & verified** (`scripts/seed-demo-accounts.mjs`); run against production when ready. | 🟡 ~1 day |
-| B | **Real "weekly" stats** | `visitors: "45K"` / `contributions: "1.2K"` are hardcoded ([App.tsx:55-56](src/App.tsx#L55), shown at :317-318). Replace with **live counts** (members, contribution posts). Relabel if "Weekly" no longer fits. Depends on A. | 🟢 ~½ day |
-| C | **Community created date → 06/27/2026** | `created: "Feb 16, 2018"` ([App.tsx:54](src/App.tsx#L54)) → **Jun 27, 2026**. | 🟢 ~min |
-| D | **Remove the "Promote" button** | Delete the Rocket/"Promote" (advertise-a-post) action ([App.tsx:282](src/App.tsx#L282)). *(Not the mod "promote member" action — that's in Moderation.)* | 🟢 ~min |
-| E | **Update the home-page top icon** | Swap the header/home icon for a new image (**provided when this is built**). | 🟢 ~1 hr |
-
----
-
 ## 1. Appearance & UX
 
 | Feature | What it delivers | Effort |
