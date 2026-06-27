@@ -150,16 +150,13 @@ Search/social visibility for a client-rendered React app. Ordered by impact (the
 
 | # | Improvement | What it delivers | Effort |
 |---|-------------|------------------|--------|
-| 1 | **Dynamic meta tags for bots** | **The #1 win.** Social crawlers (Discord/Twitter/Facebook) don't run JS, so every shared link currently shows generic tags. Use **Vercel Edge Middleware** to detect crawlers, fetch the post/profile from Supabase server-side, and inject real `<title>`, `<meta description>`, and Open Graph tags. Per page: post (title + 160-char body, author, cover), profile (name + bio, avatar), feed (community name + blurb). No full SSR migration. | 🟡 2–3 days |
-| 2 | **Client-side title + meta on route change** | Set `document.title` and update description/OG tags (e.g. `react-helmet-async`) immediately on navigation — helps Google's renderer and the browser tab. | 🟢 ~½ day |
-| 3 | **Structured data (JSON-LD)** | `Article`/`SocialMediaPosting` on posts (author, datePublished, upvote/comment counts), `ProfilePage` on profiles, `BreadcrumbList` for nav, `WebSite` + `SearchAction`. Enables rich results. | 🟢 1–2 days |
-| 4 | **`sitemap.xml` + `robots.txt`** | Dynamic sitemap listing public posts, profiles, tags, and the wiki; `robots.txt` allowing crawl + pointing to it. Submit to Google Search Console + Bing. | 🟢 ~½ day |
-| 5 | **Canonical URLs** | `<link rel="canonical">` on every page to avoid duplicate-content issues when posts are reachable via multiple feeds. | 🟢 ~hours |
-| 6 | **Image SEO** | Descriptive `alt` text (e.g. "Shuri fanart by username"), meaningful file names, `og:image` on posts with a cover. | 🟡 1–2 days |
-| 7 | **Pagination handling** | Make "page 2" of feeds/tags reachable via paginated URLs (`?page=2`) with canonical + `rel="next"/"prev"`, since infinite scroll alone is bad for crawlers. *Do alongside Sorting.* | 🟡 1–2 days |
-| 8 | **Core Web Vitals** | LCP (preload/`fetchpriority` hero images), CLS (reserve space for images/embeds), INP (code-split route bundles), `font-display: swap`, WebP/AVIF via Supabase image transforms. | 🟡 1–2 days initial, then ongoing |
-| 9 | **Internal link architecture** | Posts link to author + tag pages; sidebar/footer link to key tags, wiki, static pages; breadcrumbs; no orphan pages. | 🟢 ongoing review |
-| 10 | **Social sharing embeds** | Verify rich unfurl cards on Discord/Tumblr/Twitter — relies on #1; test thoroughly. Fandom lives on social, so good cards drive referral traffic. | 🟢 testing after #1 |
+| 1 | **Dynamic meta tags for bots** | **The #1 win.** Social crawlers (Discord/Twitter/Facebook) don't run JS, so every shared link currently shows generic tags. Use **Vercel Edge Middleware** to detect crawlers, fetch the post/profile from Supabase server-side, and inject real `<title>`, `<meta description>`, and Open Graph tags. Per page: post (title + 160-char body, author, cover), profile (name + bio, avatar), feed (community name + blurb). No full SSR migration. *(Client-side meta/canonical for the same pages is already shipped — this covers the no-JS crawlers.)* | 🟡 2–3 days |
+| 2 | **Structured data (JSON-LD)** | `Article`/`SocialMediaPosting` on posts (author, datePublished, upvote/comment counts), `ProfilePage` on profiles, `BreadcrumbList` for nav, `WebSite` + `SearchAction`. Enables rich results. | 🟢 1–2 days |
+| 3 | **Image SEO** | Descriptive `alt` text (e.g. "Shuri fanart by username"), meaningful file names, `og:image` on posts with a cover. | 🟡 1–2 days |
+| 4 | **Pagination handling** | Make "page 2" of feeds/tags reachable via paginated URLs (`?page=2`) with canonical + `rel="next"/"prev"`, since infinite scroll alone is bad for crawlers. *Do alongside Sorting.* | 🟡 1–2 days |
+| 5 | **Core Web Vitals** | LCP (preload/`fetchpriority` hero images), CLS (reserve space for images/embeds), INP (code-split route bundles), `font-display: swap`, WebP/AVIF via Supabase image transforms. | 🟡 1–2 days initial, then ongoing |
+| 6 | **Internal link architecture** | Posts link to author + tag pages; sidebar/footer link to key tags, wiki, static pages; breadcrumbs; no orphan pages. | 🟢 ongoing review |
+| 7 | **Social sharing embeds** | Verify rich unfurl cards on Discord/Tumblr/Twitter — relies on #1; test thoroughly. Fandom lives on social, so good cards drive referral traffic. | 🟢 testing after #1 |
 
 ---
 
@@ -182,7 +179,7 @@ Search/social visibility for a client-rendered React app. Ordered by impact (the
 5. **Search**.
 6. **Notifications / inbox** — highest retention value; foundation for follow alerts.
 7. **Reporting + mod toolkit** — community health as the user base grows.
-8. **SEO #1–#5** — cheap, high-leverage; do the quick ones early so shared links look good from day one.
+8. **SEO: bot meta tags (#1) + JSON-LD (#2)** — make shared links unfurl richly on social and enable rich results. (The canonical / client-side meta / sitemap + robots basics are already shipped.)
 
 Then layer in fandom wins (rich embeds, reading lists, avatar builder, collaboration) and the big bets (Circles, wiki).
 

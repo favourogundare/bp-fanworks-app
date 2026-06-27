@@ -16,6 +16,7 @@ import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
+import { setPageMeta, clip } from "./lib/seo";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -795,6 +796,7 @@ function AppLayout() {
 // ----- Routed pages (read URL params, load their own data) -----
 function LandingRoute() {
   const c: any = useOutletContext();
+  useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
   return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} />;
 }
 
@@ -805,6 +807,11 @@ function PostRoute() {
   const load = async () => { try { setPost(await fetchPostWithComments(id as string)); } catch (e) { console.error("post load failed", e); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { window.scrollTo(0, 0); setPost(null); load(); }, [id]);
+  useEffect(() => {
+    if (!post) return;
+    const cover = (post.media || []).find((m) => typeof m === "string" && m.startsWith("http"));
+    setPageMeta({ title: `${post.title} — ${community.name}`, description: clip(post.body) || community.blurb, image: cover, url: `/post/${post.id}`, type: "article" });
+  }, [post]);
   if (!post) return <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 16px", color: c.t.muted, fontSize: 14 }}>Loading…</div>;
   return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} />;
 }
@@ -817,6 +824,10 @@ function MemberRoute() {
   const load = async () => { setLoading(true); try { setProfile(await fetchProfile(username as string)); } catch (e) { console.error("profile load failed", e); } finally { setLoading(false); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { window.scrollTo(0, 0); load(); }, [username]);
+  useEffect(() => {
+    if (!profile) return;
+    setPageMeta({ title: `${profile.display} (@${profile.username}) — ${community.name}`, description: clip(profile.banner) || `${profile.display} on ${community.name}.`, url: `/user/${profile.username}`, type: "profile" });
+  }, [profile]);
   return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} />;
 }
 
