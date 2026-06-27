@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
@@ -8,7 +8,10 @@ import {
 } from "lucide-react";
 import { useAuth } from "./auth/AuthProvider";
 import { supabase } from "./lib/supabase";
-import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames } from "./lib/api";
+import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId } from "./lib/api";
+import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
+import type { UiMessage, UiConversation } from "./lib/chat";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -127,7 +130,7 @@ function Vote({ votes, t, targetType, targetId }) {
   );
 }
 
-function ActionPill({ icon, label, t, onClick }) {
+function ActionPill({ icon, label, t, onClick }: any) {
   return <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 6, background: t.pill, color: t.muted,
     border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{icon}{label}</button>;
 }
@@ -167,7 +170,8 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
   const [followed, setFollowed] = useState(false);
   if (muted) {
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", color: t.muted, fontSize: 13, fontStyle: "italic" }}>
-      Post hidden — you muted {post.author}.
+      Post hidden — you muted{" "}
+      <span onClick={() => onAuthor(post.author)} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700 }}>{post.author}</span>. Open their profile to unmute.
     </div>;
   }
   return (
@@ -298,29 +302,102 @@ function CreatePostModal({ t, onClose }) {
 }
 
 // ----- Chat drawer -----
-function ChatDrawer({ t, onClose }) {
-  const [msgs, setMsgs] = useState([
-    { from: "them", text: "your MBJ take was brave lol. mostly agree tho" },
-    { from: "me", text: "ty! the fanfic crowd was NOT ready 😂" },
-  ]);
+function ChatDrawer({ t, target, onClose }) {
+  const [myId, setMyId] = useState<string | null>(null);
+  const [view, setView] = useState(target ? "thread" : "list");
+  const [conversations, setConversations] = useState<UiConversation[]>([]);
+  const [active, setActive] = useState<{ id: string; username: string } | null>(null);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
   const [val, setVal] = useState("");
-  const send = () => { if (!val.trim()) return; setMsgs([...msgs, { from: "me", text: val }]); setVal(""); };
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { getMyProfileId().then(setMyId); }, []);
+
+  const openThread = async (info) => {
+    setError(null); setLoading(true); setView("thread"); setMessages([]);
+    try {
+      const convId = info.convId || await getOrCreateConversation(info.profileId);
+      setActive({ id: convId, username: info.username });
+      setMessages(await fetchMessages(convId));
+    } catch (e: any) {
+      setError((e && e.message) || "Couldn't open this conversation.");
+      setActive(null);
+    } finally { setLoading(false); }
+  };
+
+  // On open: jump into the target thread, or load the conversation list.
+  useEffect(() => {
+    if (target) openThread({ profileId: target.profileId, username: target.username });
+    else fetchConversations().then(setConversations).catch((e) => console.error("conversations load failed", e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live updates for the active conversation.
+  useEffect(() => {
+    if (!active?.id) return;
+    return subscribeToMessages(active.id, myId, (m) => {
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+    });
+  }, [active?.id, myId]);
+
+  // Autoscroll to the newest message.
+  useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [messages]);
+
+  const send = async () => {
+    const body = val.trim();
+    if (!body || !active?.id) return;
+    setVal("");
+    try {
+      const msg = await sendMessage(active.id, body);
+      setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]));
+    } catch (e: any) {
+      setError((e && e.message) || "Message failed — you may be blocked.");
+      setVal(body);
+    }
+  };
+
   return (
     <div style={{ position: "fixed", right: 16, bottom: 16, width: 320, height: 420, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, display: "flex", flexDirection: "column", zIndex: 40, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 12, borderBottom: `1px solid ${t.border}` }}>
-        <Avatar seed="goldenjaguar88" size={28} t={t} />
-        <span style={{ color: t.text, fontWeight: 700, fontSize: 14 }}>goldenjaguar88</span>
+        {view === "thread" && !target ? (
+          <button onClick={() => { setView("list"); setActive(null); setError(null); }} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex" }}><ArrowLeft size={18} /></button>
+        ) : null}
+        {view === "thread" && active ? <Avatar seed={active.username} size={28} t={t} /> : <MessageSquare size={18} color={t.muted} />}
+        <span style={{ color: t.text, fontWeight: 700, fontSize: 14 }}>{view === "thread" && active ? active.username : "Messages"}</span>
         <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={18} /></button>
       </div>
-      <div style={{ flex: 1, overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-        {msgs.map((m, i) => (
-          <div key={i} style={{ alignSelf: m.from === "me" ? "flex-end" : "flex-start", maxWidth: "78%", background: m.from === "me" ? t.accent : t.panel2, color: m.from === "me" ? t.accentText : t.text, padding: "8px 12px", borderRadius: 14, fontSize: 13 }}>{m.text}</div>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 8, padding: 10, borderTop: `1px solid ${t.border}` }}>
-        <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Message..." style={{ flex: 1, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 12px", color: t.text }} />
-        <button onClick={send} style={{ background: t.accent, border: "none", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.accentText }}><Send size={16} /></button>
-      </div>
+
+      {view === "list" ? (
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {conversations.length === 0 ? (
+            <div style={{ color: t.muted, fontSize: 13, padding: 16, textAlign: "center" }}>No conversations yet. Open someone's profile and tap Chat.</div>
+          ) : (
+            conversations.map((c) => (
+              <button key={c.id} onClick={() => openThread({ convId: c.id, username: c.otherUsername, profileId: c.otherProfileId })} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "none", border: "none", borderBottom: `1px solid ${t.border}`, cursor: "pointer", textAlign: "left" }}>
+                <Avatar seed={c.otherUsername} size={30} t={t} />
+                <span style={{ color: t.text, fontSize: 14, fontWeight: 600 }}>{c.otherUsername}</span>
+              </button>
+            ))
+          )}
+        </div>
+      ) : (
+        <>
+          <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            {loading && <div style={{ color: t.muted, fontSize: 13 }}>Loading…</div>}
+            {error && <div style={{ color: "#e0726b", fontSize: 13 }}>{error}</div>}
+            {!loading && !error && messages.length === 0 && <div style={{ color: t.muted, fontSize: 13 }}>No messages yet — say hi.</div>}
+            {messages.map((m) => (
+              <div key={m.id} style={{ alignSelf: m.fromMe ? "flex-end" : "flex-start", maxWidth: "78%", background: m.fromMe ? t.accent : t.panel2, color: m.fromMe ? t.accentText : t.text, padding: "8px 12px", borderRadius: 14, fontSize: 13 }}>{m.body}</div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, padding: 10, borderTop: `1px solid ${t.border}` }}>
+            <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Message..." disabled={!active} style={{ flex: 1, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 12px", color: t.text, opacity: active ? 1 : 0.5 }} />
+            <button onClick={send} disabled={!active} style={{ background: t.accent, border: "none", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: active ? "pointer" : "not-allowed", color: t.accentText, opacity: active ? 1 : 0.5 }}><Send size={16} /></button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -441,7 +518,7 @@ function MemberPage({ t, profile, loading, isMe, onOpen, onChat, onRelationshipC
           <>
             <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
               <button onClick={() => toggle("follow")} style={relBtn(t, rel.follow)}>{rel.follow ? <UserMinus size={15} /> : <UserPlus size={15} />}{rel.follow ? "Following" : "Follow"}</button>
-              <button onClick={onChat} disabled={rel.block} style={{ ...relBtn(t), opacity: rel.block ? 0.5 : 1, cursor: rel.block ? "not-allowed" : "pointer" }}><MessageSquare size={15} /> Chat</button>
+              <button onClick={() => onChat(profile)} disabled={rel.block} style={{ ...relBtn(t), opacity: rel.block ? 0.5 : 1, cursor: rel.block ? "not-allowed" : "pointer" }}><MessageSquare size={15} /> Chat</button>
               <button onClick={() => toggle("mute")} style={relBtn(t, rel.mute)}><VolumeX size={15} /> {rel.mute ? "Muted" : "Mute"}</button>
               <button onClick={() => toggle("block")} style={relBtn(t, rel.block)}><Flag size={15} /> {rel.block ? "Blocked" : "Block"}</button>
             </div>
@@ -484,26 +561,27 @@ function MemberPage({ t, profile, loading, isMe, onOpen, onChat, onRelationshipC
   );
 }
 
-function relBtn(t, active) {
+function relBtn(t, active = false) {
   return { display: "flex", alignItems: "center", gap: 6, background: active ? t.accent : t.panel2, color: active ? t.accentText : t.text, border: `1px solid ${active ? t.accent : t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 };
 }
 
 // ----- App shell -----
 export default function App() {
   const [view, setView] = useState("landing");
-  const [activePost, setActivePost] = useState(null);
+  const [activePost, setActivePost] = useState<UiPost | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [chatTarget, setChatTarget] = useState<{ profileId: string; username: string } | null>(null);
   const [joined, setJoined] = useState(true);
-  const [mutedUsers, setMutedUsers] = useState([]); // usernames hidden from feed (muted/blocked)
+  const [mutedUsers, setMutedUsers] = useState<string[]>([]); // usernames hidden from feed (muted/blocked)
   const { user, signOut } = useAuth();
 
-  const [feed, setFeed] = useState([]);
-  const [pinned, setPinned] = useState([]);
+  const [feed, setFeed] = useState<UiPost[]>([]);
+  const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState<UiProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [myUsername, setMyUsername] = useState(null);
+  const [myUsername, setMyUsername] = useState<string | null>(null);
 
   const t = view === "member" ? neutral : gold;
 
@@ -545,6 +623,8 @@ export default function App() {
     } catch (e) { console.error("post load failed", e); }
   };
 
+  const openChatWith = (p) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
+
   const openAuthor = async (username) => {
     const uname = typeof username === "string" ? username : myUsername;
     if (!uname) return;
@@ -564,7 +644,7 @@ export default function App() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} /> Create Post</button>
-          <button onClick={() => setShowChat(true)} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
+          <button onClick={() => { setChatTarget(null); setShowChat(true); }} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
           <button onClick={() => setJoined(!joined)} style={{ background: joined ? "transparent" : t.accent, color: joined ? t.text : t.accentText, border: `1px solid ${joined ? t.border : t.accent}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13 }}>{joined ? "Joined" : "Join"}</button>
           <button onClick={() => openAuthor(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
           <button onClick={signOut} title="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
@@ -574,11 +654,11 @@ export default function App() {
       <div style={{ padding: "16px 0 70px" }}>
         {view === "landing" && <LandingPage t={t} posts={feed} pinned={pinned} loading={feedLoading} onOpen={openPost} onAuthor={openAuthor} mutedUsers={mutedUsers} />}
         {view === "post" && activePost && <PostPage post={activePost} t={t} onBack={() => setView("landing")} onAuthor={openAuthor} />}
-        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} isMe={!!profile && profile.username === myUsername} onOpen={openPost} onChat={() => setShowChat(true)} onRelationshipChange={refreshHidden} />}
+        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} isMe={!!profile && profile.username === myUsername} onOpen={openPost} onChat={openChatWith} onRelationshipChange={refreshHidden} />}
       </div>
 
       {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} />}
-      {showChat && <ChatDrawer t={t} onClose={() => setShowChat(false)} />}
+      {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
     </div>
   );
 }
