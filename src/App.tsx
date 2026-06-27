@@ -313,7 +313,7 @@ function CommunitySidebar({ t }) {
         <BookOpen size={15} /> Community Guide
       </button>
       <div style={{ display: "flex", gap: 24, marginBottom: 18 }}>
-        <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.members.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Members</div></div>
+        <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.members.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Wakandans</div></div>
         <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.contributions.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Contributions</div></div>
       </div>
       <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>COMMUNITY BOOKMARKS</div>
@@ -720,7 +720,6 @@ function AppLayout() {
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatTarget, setChatTarget] = useState<{ profileId: string; username: string } | null>(null);
-  const [joined, setJoined] = useState(true);
   const [mutedUsers, setMutedUsers] = useState<string[]>([]); // usernames hidden from feed (muted/blocked)
   const { user, signOut } = useAuth();
 
@@ -778,7 +777,6 @@ function AppLayout() {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} /> Create Post</button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
-          <button onClick={() => setJoined(!joined)} style={{ background: joined ? "transparent" : t.accent, color: joined ? t.text : t.accentText, border: `1px solid ${joined ? t.border : t.accent}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13 }}>{joined ? "Joined" : "Join"}</button>
           <button onClick={() => goUser(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
           <button onClick={signOut} title="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
         </div>
