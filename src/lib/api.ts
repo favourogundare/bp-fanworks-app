@@ -179,6 +179,15 @@ function mapPost(row: Row): UiPost {
   }
 }
 
+/** Live community stats for the sidebar: total members and contribution posts. */
+export async function fetchCommunityStats(): Promise<{ members: number; contributions: number }> {
+  const [membersRes, contribRes] = await Promise.all([
+    supabase.from('profiles').select('id', { count: 'exact', head: true }),
+    supabase.from('posts').select('id', { count: 'exact', head: true }).eq('surface', 'community'),
+  ])
+  return { members: membersRes.count ?? 0, contributions: contribRes.count ?? 0 }
+}
+
 /** Newest community posts (excludes pinned highlights). */
 export async function fetchCommunityFeed(): Promise<UiPost[]> {
   const { data, error } = await supabase
