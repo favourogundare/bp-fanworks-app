@@ -36,6 +36,7 @@ export interface UiPinned {
 }
 
 export interface UiProfile {
+  id: string
   username: string
   display: string
   flair: string | null

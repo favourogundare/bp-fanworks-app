@@ -171,6 +171,56 @@ export async function fetchPostWithComments(id: string): Promise<UiPost> {
   return { ...mapPost(post), comments: tree, commentCount: countTree(tree) }
 }
 
+// ----- relationships (follow / mute / block) -----
+export type RelType = 'follow' | 'mute' | 'block'
+
+/** This member's current relationship flags toward a target profile. */
+export async function getRelationshipState(
+  targetProfileId: string,
+): Promise<{ follow: boolean; mute: boolean; block: boolean }> {
+  const me = await getMyProfileId()
+  const blank = { follow: false, mute: false, block: false }
+  if (!me) return blank
+  const { data } = await supabase
+    .from('relationships')
+    .select('type')
+    .eq('actor_id', me)
+    .eq('target_id', targetProfileId)
+  const types = new Set((data ?? []).map((r: Row) => r.type))
+  return { follow: types.has('follow'), mute: types.has('mute'), block: types.has('block') }
+}
+
+/** Add (on=true) or remove (on=false) a relationship of the given type. */
+export async function setRelationship(targetProfileId: string, type: RelType, on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (me === targetProfileId) throw new Error("You can't do that to yourself")
+  if (on) {
+    const { error } = await supabase
+      .from('relationships')
+      .upsert({ actor_id: me, target_id: targetProfileId, type }, { onConflict: 'actor_id,target_id,type' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('relationships')
+      .delete()
+      .match({ actor_id: me, target_id: targetProfileId, type })
+    if (error) throw error
+  }
+}
+
+/** Usernames whose posts should be hidden from this member's feed (muted OR blocked). */
+export async function fetchHiddenUsernames(): Promise<string[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data } = await supabase
+    .from('relationships')
+    .select('type, target:profiles!relationships_target_id_fkey(username)')
+    .eq('actor_id', me)
+    .in('type', ['mute', 'block'])
+  return (data ?? []).map((r: Row) => r.target?.username).filter(Boolean) as string[]
+}
+
 /** A member profile + their profile-surface posts, with follower/contribution counts. */
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
@@ -200,6 +250,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
   ])
 
   return {
+    id: p.id,
     username: p.username,
     display: p.display_name || p.username,
     flair: (p.member_flair as Row | null)?.label ?? null,

@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "./auth/AuthProvider";
 import { supabase } from "./lib/supabase";
-import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote } from "./lib/api";
+import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames } from "./lib/api";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -387,11 +387,37 @@ function PostPage({ post, t, onBack, onAuthor }) {
   );
 }
 
-function MemberPage({ t, profile, loading, onOpen, onChat }) {
-  const [rel, setRel] = useState({ following: false, muted: false, blocked: false });
+function MemberPage({ t, profile, loading, isMe, onOpen, onChat, onRelationshipChange }) {
+  const [rel, setRel] = useState({ follow: false, mute: false, block: false });
+  const [followerDelta, setFollowerDelta] = useState(0);
+
+  // Load the real relationship state whenever we view a different profile.
+  useEffect(() => {
+    if (!profile?.id) return;
+    let active = true;
+    setFollowerDelta(0);
+    getRelationshipState(profile.id).then((r) => { if (active) setRel(r); });
+    return () => { active = false; };
+  }, [profile?.id]);
+
   if (loading || !profile) {
     return <div style={{ maxWidth: 1180, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>{loading ? "Loading profile…" : "Profile not found."}</div>;
   }
+
+  const toggle = (type) => {
+    const key = type === "follow" ? "follow" : type === "mute" ? "mute" : "block";
+    const next = !rel[key];
+    setRel({ ...rel, [key]: next });            // optimistic
+    if (type === "follow") setFollowerDelta((d) => d + (next ? 1 : -1));
+    setRelationship(profile.id, type, next)
+      .then(() => { if (type !== "follow") onRelationshipChange?.(); }) // refresh feed hides on mute/block
+      .catch((e) => {                            // revert on failure
+        console.error("relationship update failed", e);
+        setRel((r) => ({ ...r, [key]: !next }));
+        if (type === "follow") setFollowerDelta((d) => d - (next ? 1 : -1));
+      });
+  };
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 24, maxWidth: 1180, margin: "0 auto", padding: "0 16px" }}>
       <div style={{ paddingTop: 16 }}>
@@ -409,16 +435,22 @@ function MemberPage({ t, profile, loading, onOpen, onChat }) {
         <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
           <Eye size={18} color={t.muted} /><span style={{ color: t.text, fontWeight: 700, fontSize: 14 }}>Showing all content</span>
         </div>
-        <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setRel({ ...rel, following: !rel.following })} style={relBtn(t, rel.following)}>{rel.following ? <UserMinus size={15} /> : <UserPlus size={15} />}{rel.following ? "Following" : "Follow"}</button>
-          <button onClick={onChat} style={relBtn(t)}><MessageSquare size={15} /> Chat</button>
-          <button onClick={() => setRel({ ...rel, muted: !rel.muted })} style={relBtn(t, rel.muted)}><VolumeX size={15} /> {rel.muted ? "Muted" : "Mute"}</button>
-          <button onClick={() => setRel({ ...rel, blocked: !rel.blocked })} style={relBtn(t, rel.blocked)}><Flag size={15} /> {rel.blocked ? "Blocked" : "Block"}</button>
-        </div>
-        {(rel.muted || rel.blocked) && (
-          <div style={{ color: t.muted, fontSize: 12, fontStyle: "italic", marginBottom: 12 }}>
-            {rel.blocked ? "Blocked: this user can't message you and their content is hidden everywhere." : "Muted: you won't see this user's posts in the feed."}
-          </div>
+        {isMe ? (
+          <div style={{ color: t.muted, fontSize: 13, fontStyle: "italic", marginBottom: 12 }}>This is your profile.</div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+              <button onClick={() => toggle("follow")} style={relBtn(t, rel.follow)}>{rel.follow ? <UserMinus size={15} /> : <UserPlus size={15} />}{rel.follow ? "Following" : "Follow"}</button>
+              <button onClick={onChat} disabled={rel.block} style={{ ...relBtn(t), opacity: rel.block ? 0.5 : 1, cursor: rel.block ? "not-allowed" : "pointer" }}><MessageSquare size={15} /> Chat</button>
+              <button onClick={() => toggle("mute")} style={relBtn(t, rel.mute)}><VolumeX size={15} /> {rel.mute ? "Muted" : "Mute"}</button>
+              <button onClick={() => toggle("block")} style={relBtn(t, rel.block)}><Flag size={15} /> {rel.block ? "Blocked" : "Block"}</button>
+            </div>
+            {(rel.mute || rel.block) && (
+              <div style={{ color: t.muted, fontSize: 12, fontStyle: "italic", marginBottom: 12 }}>
+                {rel.block ? "Blocked: this user can't message you and their content is hidden everywhere." : "Muted: you won't see this user's posts in the feed."}
+              </div>
+            )}
+          </>
         )}
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
           {profile.posts.length === 0
@@ -434,7 +466,7 @@ function MemberPage({ t, profile, loading, onOpen, onChat }) {
             <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>{profile.display}</h3>{profile.isMod && <Shield size={16} color="#ff4500" />}
           </div>
           <button style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: "none", borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 13, marginBottom: 14 }}><Share2 size={14} /> Share</button>
-          <div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{profile.followers} followers</div>
+          <div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{profile.followers + followerDelta} followers</div>
           {profile.flair && <div style={{ color: t.muted, fontSize: 13, marginBottom: 14 }}>{profile.flair}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14, marginTop: 14 }}>
             {[["Karma", profile.karma], ["Contributions", profile.contributions], ["Account age", profile.age], ["Gold earned", profile.gold]].map(([k, v]) => (
@@ -463,7 +495,7 @@ export default function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [joined, setJoined] = useState(true);
-  const [mutedUsers] = useState([]);
+  const [mutedUsers, setMutedUsers] = useState([]); // usernames hidden from feed (muted/blocked)
   const { user, signOut } = useAuth();
 
   const [feed, setFeed] = useState([]);
@@ -496,6 +528,13 @@ export default function App() {
     })();
     return () => { active = false; };
   }, []);
+
+  // The set of usernames hidden from the feed (people you've muted or blocked).
+  const refreshHidden = () => {
+    fetchHiddenUsernames().then(setMutedUsers).catch((e) => console.error("hidden load failed", e));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (user?.id) refreshHidden(); }, [user?.id]);
 
   const openPost = async (post) => {
     setView("post"); window.scrollTo(0, 0);
@@ -535,7 +574,7 @@ export default function App() {
       <div style={{ padding: "16px 0 70px" }}>
         {view === "landing" && <LandingPage t={t} posts={feed} pinned={pinned} loading={feedLoading} onOpen={openPost} onAuthor={openAuthor} mutedUsers={mutedUsers} />}
         {view === "post" && activePost && <PostPage post={activePost} t={t} onBack={() => setView("landing")} onAuthor={openAuthor} />}
-        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} onOpen={openPost} onChat={() => setShowChat(true)} />}
+        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} isMe={!!profile && profile.username === myUsername} onOpen={openPost} onChat={() => setShowChat(true)} onRelationshipChange={refreshHidden} />}
       </div>
 
       {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} />}
