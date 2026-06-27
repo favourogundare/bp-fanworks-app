@@ -6,8 +6,11 @@ import {
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, Rocket, LogOut,
 } from "lucide-react";
+import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
-import { supabase } from "./lib/supabase";
+import { LoginScreen } from "./auth/LoginScreen";
+import { ResetPasswordPage } from "./auth/ResetPasswordPage";
+import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import { fetchCommunityFeed, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -136,6 +139,12 @@ function ActionPill({ icon, label, t, onClick }: any) {
     border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{icon}{label}</button>;
 }
 
+// Copy a shareable link to a post (now that posts have real URLs).
+function copyPostLink(id: string) {
+  const url = `${window.location.origin}/post/${id}`;
+  if (navigator.clipboard) navigator.clipboard.writeText(url).catch(() => {});
+}
+
 // Themed member flairs (must match the slugs seeded in migration 0001).
 const MEMBER_FLAIRS = [
   { slug: "dora-milaje", label: "Dora Milaje" },
@@ -259,7 +268,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
         <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
         <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} onClick={() => onOpen(post)} />
         <ActionPill icon={followed ? <BellOff size={15} /> : <Bell size={15} />} label={followed ? "Following" : "Follow"} t={t} onClick={() => setFollowed(!followed)} />
-        <ActionPill icon={<Share2 size={15} />} label="Share" t={t} />
+        <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
       </div>
       {showMeta && (
         <>
@@ -583,7 +592,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved 
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0" }}>
           <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
           <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} />
-          <ActionPill icon={<Share2 size={15} />} label="Share" t={t} />
+          <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
         </div>
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
@@ -706,10 +715,8 @@ function relBtn(t, active = false) {
   return { display: "flex", alignItems: "center", gap: 6, background: active ? t.accent : t.panel2, color: active ? t.accentText : t.text, border: `1px solid ${active ? t.accent : t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 };
 }
 
-// ----- App shell -----
-export default function App() {
-  const [view, setView] = useState("landing");
-  const [activePost, setActivePost] = useState<UiPost | null>(null);
+// ----- App shell (layout for the routed pages) -----
+function AppLayout() {
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatTarget, setChatTarget] = useState<{ profileId: string; username: string } | null>(null);
@@ -720,12 +727,12 @@ export default function App() {
   const [feed, setFeed] = useState<UiPost[]>([]);
   const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
-  const [profile, setProfile] = useState<UiProfile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(false);
   const [myUsername, setMyUsername] = useState<string | null>(null);
   const [myIsMod, setMyIsMod] = useState(false);
 
-  const t = view === "member" ? neutral : gold;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const t = location.pathname.startsWith("/user") ? neutral : gold;
 
   // Resolve the current member's identity (username, mod flag) for the shell.
   useEffect(() => {
@@ -753,41 +760,18 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshHidden(); }, [user?.id]);
 
-  const openPost = async (post) => {
-    setView("post"); window.scrollTo(0, 0);
-    setActivePost({ comments: [], flairs: [], ...post }); // instant render from feed data
-    try {
-      const full = await fetchPostWithComments(post.id);
-      setActivePost(full);
-    } catch (e) { console.error("post load failed", e); }
-  };
+  const goPost = (post: any) => navigate(`/post/${post.id}`);
+  const goUser = (username: any) => { const u = typeof username === "string" ? username : myUsername; if (u) navigate(`/user/${u}`); };
+  const goHome = () => navigate("/");
+  const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
-  // Re-fetch the open post (after a new comment, vote, or mod re-flair/pin).
-  const reloadPost = async () => {
-    if (!activePost) return;
-    try { setActivePost(await fetchPostWithComments(activePost.id)); }
-    catch (e) { console.error("post reload failed", e); }
-  };
-
-  // After a mod removes the open post: go back to the feed and refresh it.
-  const onPostRemoved = () => { setView("landing"); loadFeed(); };
-
-  const openChatWith = (p) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
-
-  const openAuthor = async (username) => {
-    const uname = typeof username === "string" ? username : myUsername;
-    if (!uname) return;
-    setView("member"); window.scrollTo(0, 0);
-    setProfile(null); setProfileLoading(true);
-    try { setProfile(await fetchProfile(uname)); }
-    catch (e) { console.error("profile load failed", e); }
-    finally { setProfileLoading(false); }
-  };
+  // Shared with the routed pages via <Outlet context>.
+  const ctx = { t, feed, pinned, feedLoading, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, loadFeed };
 
   return (
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30 }}>
-        <button onClick={() => setView("landing")} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: 17, cursor: "pointer" }}>{community.name}</button>
+        <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: 17, cursor: "pointer" }}>{community.name}</button>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 999, padding: "7px 14px", maxWidth: 420 }}>
           <Search size={16} color={t.muted} /><input placeholder="Search" style={{ background: "none", border: "none", outline: "none", color: t.text, flex: 1 }} />
         </div>
@@ -795,19 +779,90 @@ export default function App() {
           <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} /> Create Post</button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
           <button onClick={() => setJoined(!joined)} style={{ background: joined ? "transparent" : t.accent, color: joined ? t.text : t.accentText, border: `1px solid ${joined ? t.border : t.accent}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13 }}>{joined ? "Joined" : "Join"}</button>
-          <button onClick={() => openAuthor(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
+          <button onClick={() => goUser(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
           <button onClick={signOut} title="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
         </div>
       </div>
 
       <div style={{ padding: "16px 0 70px" }}>
-        {view === "landing" && <LandingPage t={t} posts={feed} pinned={pinned} loading={feedLoading} onOpen={openPost} onAuthor={openAuthor} mutedUsers={mutedUsers} />}
-        {view === "post" && activePost && <PostPage post={activePost} t={t} onBack={() => setView("landing")} onAuthor={openAuthor} isMod={myIsMod} onCommentAdded={reloadPost} onRemoved={onPostRemoved} />}
-        {view === "member" && <MemberPage t={t} profile={profile} loading={profileLoading} isMe={!!profile && profile.username === myUsername} isMod={myIsMod} onOpen={openPost} onChat={openChatWith} onRelationshipChange={refreshHidden} onProfileChanged={() => openAuthor(profile?.username)} />}
+        <Outlet context={ctx} />
       </div>
 
       {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} onCreated={loadFeed} />}
       {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
     </div>
+  );
+}
+
+// ----- Routed pages (read URL params, load their own data) -----
+function LandingRoute() {
+  const c: any = useOutletContext();
+  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} />;
+}
+
+function PostRoute() {
+  const c: any = useOutletContext();
+  const { id } = useParams();
+  const [post, setPost] = useState<UiPost | null>(null);
+  const load = async () => { try { setPost(await fetchPostWithComments(id as string)); } catch (e) { console.error("post load failed", e); } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); setPost(null); load(); }, [id]);
+  if (!post) return <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 16px", color: c.t.muted, fontSize: 14 }}>Loading…</div>;
+  return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} />;
+}
+
+function MemberRoute() {
+  const c: any = useOutletContext();
+  const { username } = useParams();
+  const [profile, setProfile] = useState<UiProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = async () => { setLoading(true); try { setProfile(await fetchProfile(username as string)); } catch (e) { console.error("profile load failed", e); } finally { setLoading(false); } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); load(); }, [username]);
+  return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} />;
+}
+
+// ----- Auth gate + route table -----
+const centered: React.CSSProperties = { minHeight: "100vh", background: "#0B0B0F", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, system-ui, sans-serif" };
+
+function Splash() {
+  return <div style={centered}><div style={{ color: "#9b9488", fontSize: 14 }}>Loading…</div></div>;
+}
+
+function SetupNotice() {
+  const code = { background: "#1F1E26", borderRadius: 4, padding: "1px 6px", fontSize: 13, color: "#C8A24A" } as const;
+  return (
+    <div style={centered}>
+      <div style={{ maxWidth: 460, background: "#15141a", border: "1px solid #2e2b22", borderRadius: 16, padding: 24, color: "#ECE8DF" }}>
+        <h1 style={{ color: "#C8A24A", fontSize: 20, margin: "0 0 12px" }}>Almost there</h1>
+        <p style={{ color: "#9b9488", fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+          Add your Supabase anon key to <code style={code}>.env</code> as <code style={code}>VITE_SUPABASE_ANON_KEY</code>,
+          then restart the dev server.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// The "/" branch: show login/splash when signed out, otherwise the app layout.
+function AuthedLayout() {
+  const { session, loading } = useAuth();
+  if (loading) return <Splash />;
+  if (!session) return <LoginScreen />;
+  return <AppLayout />;
+}
+
+export default function AppRoutes() {
+  if (!isSupabaseConfigured) return <SetupNotice />;
+  return (
+    <Routes>
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/" element={<AuthedLayout />}>
+        <Route index element={<LandingRoute />} />
+        <Route path="post/:id" element={<PostRoute />} />
+        <Route path="user/:username" element={<MemberRoute />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }
