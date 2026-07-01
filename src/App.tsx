@@ -243,7 +243,8 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
   const remove = async () => {
     setBusy(true);
     try { await deleteComment(c.id); onAdded?.(); }
-    catch (e) { console.error("comment delete failed", e); setBusy(false); setConfirming(false); }
+    catch (e) { console.error("comment delete failed", e); }
+    finally { setBusy(false); setConfirming(false); }
   };
 
   return (
