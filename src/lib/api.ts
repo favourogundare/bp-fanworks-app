@@ -101,6 +101,32 @@ export async function createComment(input: {
   if (error) throw error
 }
 
+// ----- editing / deleting own content (RLS enforces ownership) -----
+export async function updatePost(id: string, fields: { title: string; body: string }): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ title: fields.title, body: fields.body })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function deletePost(id: string): Promise<void> {
+  const { error } = await supabase.from('posts').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function updateComment(id: string, body: string): Promise<void> {
+  const { error } = await supabase.from('comments').update({ body }).eq('id', id)
+  if (error) throw error
+}
+
+// ponytail: hard delete — FK cascade also removes any child replies (others'
+// included). RLS comments_delete_own restricts this to the comment's author.
+export async function deleteComment(id: string): Promise<void> {
+  const { error } = await supabase.from('comments').delete().eq('id', id)
+  if (error) throw error
+}
+
 /** Upload files to the public post-media bucket; returns their public URLs. */
 export async function uploadMedia(files: File[]): Promise<string[]> {
   const urls: string[] = []
