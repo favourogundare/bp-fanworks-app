@@ -269,7 +269,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
               </div>
             </div>
           ) : (
-            <p style={{ fontSize: 14, color: t.text, whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.body}</p>
+            <p style={{ fontSize: 14, color: c.deleted ? t.muted : t.text, fontStyle: c.deleted ? "italic" : "normal", whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.body}</p>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
@@ -283,7 +283,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
           {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} />)}
         </div>
       )}
-      {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Any replies to it are removed too. This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+      {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Your comment will show as “[deleted]”. Replies to it stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
   );
 }
