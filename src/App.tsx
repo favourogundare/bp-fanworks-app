@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useContext, createContext } from "react";
 import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut, Pencil, ExternalLink,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -95,7 +95,11 @@ function Flair({ flairKey }) {
   return <span style={{ background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>{f.label}</span>;
 }
 
-function Avatar({ seed, size = 36, t }) {
+// Signed-in member's content prefs, provided by AppLayout (blur pref reaches MediaBlock without prop drilling).
+const PrefsContext = createContext<{ blurMedia: boolean }>({ blurMedia: true });
+
+function Avatar({ seed, size = 36, t, url = null }: any) {
+  if (url) return <img src={url} alt="" style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
   let h = 0; for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return <div style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0,
     background: `linear-gradient(135deg, hsl(${h},45%,42%), hsl(${(h + 50) % 360},45%,30%))`, border: `1px solid ${t.border}` }} />;
@@ -174,7 +178,8 @@ const isVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
 // ----- Media (real uploads + NSFW suppression) -----
 function MediaBlock({ post, t }: any) {
   const [revealed, setRevealed] = useState(false);
-  const nsfw = post.flairs?.includes("nsfw");
+  const { blurMedia } = useContext(PrefsContext);
+  const nsfw = post.flairs?.includes("nsfw") && blurMedia; // pref off = never blur
   const urls = (post.media || []).filter((m: any) => typeof m === "string" && m.startsWith("http"));
 
   if (urls.length === 0) {
@@ -751,9 +756,101 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   );
 }
 
-function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, myUsername }: any) {
+// ----- Profile edit panel (own profile: identity, links, content prefs, muted members) -----
+function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any) {
+  const [username, setUsername] = useState(profile.username);
+  const [display, setDisplay] = useState(profile.display);
+  const [banner, setBanner] = useState(profile.banner);
+  const [ao3, setAo3] = useState(profile.ao3 || "");
+  const [kofi, setKofi] = useState(profile.kofi || "");
+  const [blur, setBlur] = useState(profile.blurMedia);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [mutes, setMutes] = useState<{ id: string; username: string; type: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { fetchMyMutes().then(setMutes).catch((e) => console.error("mutes load failed", e)); }, []);
+
+  const unmute = (m: any) => {
+    setMutes((prev) => prev.filter((x) => !(x.id === m.id && x.type === m.type))); // optimistic
+    setRelationship(m.id, m.type, false)
+      .then(() => onHiddenChange?.())
+      .catch((e) => { console.error("unmute failed", e); setMutes((prev) => [...prev, m]); });
+  };
+
+  const save = async () => {
+    setErr("");
+    if (!USERNAME_RE.test(username)) { setErr("Username must be 3-20 characters: letters, numbers, underscore."); return; }
+    for (const u of [ao3, kofi]) if (u && !/^https:\/\//i.test(u)) { setErr("Links must start with https://"); return; }
+    setBusy(true);
+    try {
+      const patch: any = {};
+      if (username !== profile.username) patch.username = username;
+      if (display !== profile.display) patch.display_name = display;
+      if (banner !== profile.banner) patch.banner = banner;
+      if ((ao3 || null) !== profile.ao3) patch.ao3_url = ao3 || null;
+      if ((kofi || null) !== profile.kofi) patch.kofi_url = kofi || null;
+      if (blur !== profile.blurMedia) patch.blur_media = blur;
+      if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile);
+      if (Object.keys(patch).length) await updateMyProfile(patch);
+      onSaved(patch.username); // navigates if username changed, else reloads
+    } catch (e: any) {
+      setErr(/duplicate|unique/i.test(e?.message || "") ? "That username is taken." : e?.message || "Save failed.");
+      setBusy(false);
+    }
+  };
+
+  const field = { width: "100%", boxSizing: "border-box" as const, background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, outline: "none" };
+  const label = { color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "12px 0 4px", display: "block" };
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <h3 style={{ color: t.heading, margin: 0, fontSize: 15, fontWeight: 800 }}>Edit profile</h3>
+        <button onClick={onClose} disabled={busy} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", padding: 2 }}><X size={16} /></button>
+      </div>
+      <label style={label}>USERNAME</label>
+      <input style={field} value={username} onChange={(e) => setUsername(e.target.value)} />
+      <label style={label}>DISPLAY NAME</label>
+      <input style={field} value={display} onChange={(e) => setDisplay(e.target.value)} />
+      <label style={label}>BIO</label>
+      <textarea style={{ ...field, resize: "vertical", minHeight: 56 }} value={banner} onChange={(e) => setBanner(e.target.value)} />
+      <label style={label}>AVATAR</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Avatar seed={profile.username} url={avatarFile ? URL.createObjectURL(avatarFile) : profile.avatarUrl} size={44} t={t} />
+        <input type="file" accept="image/*" onChange={(e) => setAvatarFile(e.target.files?.[0] ?? null)} style={{ color: t.muted, fontSize: 13 }} />
+      </div>
+      <label style={label}>AO3 LINK</label>
+      <input style={field} placeholder="https://archiveofourown.org/users/…" value={ao3} onChange={(e) => setAo3(e.target.value)} />
+      <label style={label}>KO-FI LINK</label>
+      <input style={field} placeholder="https://ko-fi.com/…" value={kofi} onChange={(e) => setKofi(e.target.value)} />
+      <label style={label}>CONTENT</label>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, color: t.text, fontSize: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} /> Blur NSFW / spoiler media
+      </label>
+      <label style={label}>MUTED / BLOCKED</label>
+      {mutes.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 13 }}>Nobody muted or blocked.</div>
+      ) : (
+        mutes.map((m) => (
+          <div key={`${m.id}-${m.type}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0" }}>
+            <span style={{ color: t.text, fontSize: 13 }}>{m.username} <span style={{ color: t.muted, fontSize: 11 }}>({m.type})</span></span>
+            <button onClick={() => unmute(m)} style={{ ...relBtn(t), padding: "4px 10px", fontSize: 12 }}>Remove</button>
+          </div>
+        ))
+      )}
+      {err && <div style={{ color: "#e0726b", fontSize: 13, marginTop: 10 }}>{err}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+        <button onClick={onClose} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
+        <button onClick={save} disabled={busy} style={{ ...relBtn(t, true), opacity: busy ? 0.6 : 1 }}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
+}
+
+function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
+  const [editing, setEditing] = useState(false);
 
   // Load the real relationship state whenever we view a different profile.
   useEffect(() => {
@@ -786,7 +883,7 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
     <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 24, maxWidth: 1180, margin: "0 auto", padding: "0 16px" }}>
       <div style={{ paddingTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
-          <Avatar seed={profile.username} size={64} t={t} />
+          <Avatar seed={profile.username} url={profile.avatarUrl} size={64} t={t} />
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: 0 }}>{profile.display}</h1>
@@ -800,7 +897,15 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
           <Eye size={18} color={t.muted} /><span style={{ color: t.text, fontWeight: 700, fontSize: 14 }}>Showing all content</span>
         </div>
         {isMe ? (
-          <div style={{ color: t.muted, fontSize: 13, fontStyle: "italic", marginBottom: 12 }}>This is your profile.</div>
+          <div style={{ marginBottom: 12 }}>
+            {editing ? (
+              <ProfileEditPanel t={t} profile={profile} onClose={() => setEditing(false)}
+                onSaved={(newUsername: string | undefined) => { setEditing(false); onSavedProfile?.(newUsername); }}
+                onHiddenChange={onRelationshipChange} />
+            ) : (
+              <button onClick={() => setEditing(true)} style={relBtn(t)}><Pencil size={14} /> Edit profile</button>
+            )}
+          </div>
         ) : (
           <>
             <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
@@ -841,6 +946,12 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
             <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>{profile.display}</h3>{profile.isMod && <Shield size={16} color="#ff4500" />}
           </div>
           <button style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: "none", borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 13, marginBottom: 14 }}><Share2 size={14} /> Share</button>
+          {/* Creator links: validated https-only at save; re-checked here before rendering as hrefs. */}
+          {[["AO3", profile.ao3], ["Ko-fi", profile.kofi]].filter(([, u]) => u && /^https:\/\//i.test(u)).map(([name, u]) => (
+            <a key={name} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, color: t.accent, fontSize: 13, fontWeight: 700, textDecoration: "none", marginBottom: 8 }}>
+              <ExternalLink size={13} /> {name}
+            </a>
+          ))}
           <div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{profile.followers + followerDelta} followers</div>
           {profile.flair && <div style={{ color: t.muted, fontSize: 13, marginBottom: 14 }}>{profile.flair}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14, marginTop: 14 }}>
@@ -876,18 +987,18 @@ function AppLayout() {
   const [feedLoading, setFeedLoading] = useState(true);
   const [myUsername, setMyUsername] = useState<string | null>(null);
   const [myIsMod, setMyIsMod] = useState(false);
+  const [blurMedia, setBlurMedia] = useState(true);
 
   const navigate = useNavigate();
   const location = useLocation();
   const t = location.pathname.startsWith("/user") ? neutral : gold;
 
-  // Resolve the current member's identity (username, mod flag) for the shell.
-  useEffect(() => {
-    if (!user?.id) return;
-    let active = true;
-    fetchMyIdentity().then((id) => { if (active && id) { setMyUsername(id.username); setMyIsMod(id.isMod); } });
-    return () => { active = false; };
-  }, [user?.id]);
+  // Resolve the current member's identity (username, mod flag, content prefs) for the shell.
+  const refreshIdentity = () => fetchMyIdentity().then((id) => {
+    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); }
+  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (user?.id) refreshIdentity(); }, [user?.id]);
 
   // Load the community feed + pinned highlights (callable, so new posts refresh it).
   const loadFeed = async () => {
@@ -913,9 +1024,10 @@ function AppLayout() {
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, loadFeed };
 
   return (
+    <PrefsContext.Provider value={{ blurMedia }}>
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30 }}>
         <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: 17, cursor: "pointer" }}>{community.name}</button>
@@ -937,6 +1049,7 @@ function AppLayout() {
       {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} onCreated={loadFeed} />}
       {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
     </div>
+    </PrefsContext.Provider>
   );
 }
 
@@ -975,7 +1088,16 @@ function MemberRoute() {
     if (!profile) return;
     setPageMeta({ title: `${profile.display} (@${profile.username}) — ${community.name}`, description: clip(profile.banner) || `${profile.display} on ${community.name}.`, url: `/user/${profile.username}`, type: "profile" });
   }, [profile]);
-  return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} myUsername={c.myUsername} />;
+  const navigate = useNavigate();
+  // After saving own profile: refresh shell identity (username/blur pref), then
+  // route to the new username or reload in place.
+  const onSavedProfile = (newUsername?: string) => {
+    c.refreshIdentity();
+    c.loadFeed(); // author names in the feed may carry a changed username
+    if (newUsername) navigate(`/user/${newUsername}`, { replace: true });
+    else load();
+  };
+  return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} onSavedProfile={onSavedProfile} myUsername={c.myUsername} />;
 }
 
 // ----- Auth gate + route table -----
