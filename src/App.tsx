@@ -4,14 +4,14 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments } from "./lib/api";
 import type { FeedSort } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -138,6 +138,23 @@ function ActionPill({ icon, label, t, onClick }: any) {
     border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{icon}{label}</button>;
 }
 
+// Saved/bookmark state for a post or comment: lazy-loads my state (same pattern
+// as Vote), optimistic toggle with revert on failure.
+function useSaved(targetType: "post" | "comment", targetId: string): [boolean, () => void] {
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    let active = true;
+    getMySaved(targetType, targetId).then((v) => { if (active) setSaved(v); });
+    return () => { active = false; };
+  }, [targetType, targetId]);
+  const toggle = () => {
+    const next = !saved;
+    setSaved(next); // optimistic
+    toggleSaved(targetType, targetId, next).catch((e) => { console.error("save failed", e); setSaved(!next); });
+  };
+  return [saved, toggle];
+}
+
 // Copy a shareable link to a post (now that posts have real URLs).
 function copyPostLink(id: string) {
   const url = `${window.location.origin}/post/${id}`;
@@ -243,6 +260,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const mine = !!myUsername && c.author === myUsername;
+  const [saved, toggleSave] = useSaved("comment", c.id);
   const hoverHandlers = useUsernameHoverCard(c.author);
 
   const saveEdit = async () => {
@@ -293,6 +311,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
             <span onClick={() => setReplying(!replying)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><MessageCircle size={14} /> Reply</span>
+            <span onClick={toggleSave} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: saved ? t.accent : undefined }}><Bookmark size={14} fill={saved ? "currentColor" : "none"} /> {saved ? "Saved" : "Save"}</span>
             {mine && <span onClick={() => setEditing(!editing)} style={{ cursor: "pointer" }}>Edit</span>}
             {mine && <span onClick={() => setConfirming(true)} style={{ cursor: busy ? "default" : "pointer", color: "#e0726b", opacity: busy ? 0.6 : 1 }}>Delete</span>}
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
@@ -317,6 +336,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
+  const [saved, toggleSave] = useSaved("post", post.id);
   const hoverHandlers = useUsernameHoverCard(post.author);
 
   const saveEdit = async () => {
@@ -383,6 +403,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
         <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} onClick={() => onOpen(post)} />
         <ActionPill icon={followed ? <BellOff size={15} /> : <Bell size={15} />} label={followed ? "Following" : "Follow"} t={t} onClick={() => setFollowed(!followed)} />
+        <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
         <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
       </div>
       {showMeta && (
@@ -708,6 +729,7 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
 
 function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
   const bp = useBreakpoint();
+  const [saved, toggleSave] = useSaved("post", post.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(post.title);
@@ -775,6 +797,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0" }}>
           <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
           <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} />
+          <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
           <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
         </div>
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
@@ -1076,6 +1099,7 @@ function AppLayout() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
+          <button onClick={() => navigate("/saved")} title="Saved" aria-label="Saved items" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><Bookmark size={18} /></button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} aria-label="Messages" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
           <button onClick={toggleTheme} title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
             {mode === "dark" ? <Sun size={18} /> : <Moon size={18} />}
@@ -1150,6 +1174,38 @@ function SearchRoute() {
   }, [q]);
   useEffect(() => { setPageMeta({ title: `Search — ${community.name}`, description: community.blurb, url: "/search", type: "website" }); }, []);
   return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
+}
+
+function SavedRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const [posts, setPosts] = useState<UiPost[]>([]);
+  const [comments, setComments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    Promise.all([fetchSavedPosts(), fetchSavedComments()])
+      .then(([p, cm]) => { setPosts(p); setComments(cm); })
+      .catch((e) => console.error("saved load failed", e))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { setPageMeta({ title: `Saved — ${community.name}`, description: community.blurb, url: "/saved", type: "website" }); }, []);
+  return (
+    <>
+      <PostListPage t={t} title="Saved" sub="Your bookmarked posts and comments — only you can see this." posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="No saved posts yet. Hit Save on any post." />
+      {!loading && comments.length > 0 && (
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+          <div style={{ color: t.heading, fontSize: 15, fontWeight: 800, padding: "18px 0 6px" }}>Saved comments</div>
+          {comments.map((cm) => (
+            <div key={cm.id} onClick={() => c.goPost({ id: cm.postId })} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 12, marginBottom: 10, cursor: "pointer" }}>
+              <div style={{ color: t.muted, fontSize: 12, marginBottom: 4 }}>{cm.author} · {cm.when} · on <span style={{ color: t.link }}>{cm.postTitle}</span></div>
+              <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{cm.body}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 function PostRoute() {
@@ -1239,6 +1295,7 @@ export default function AppRoutes() {
         <Route path="user/:username" element={<MemberRoute />} />
         <Route path="t/:slug" element={<TagRoute />} />
         <Route path="search" element={<SearchRoute />} />
+        <Route path="saved" element={<SavedRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
