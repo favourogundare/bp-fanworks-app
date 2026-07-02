@@ -223,8 +223,19 @@ function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }
 }
 
 // ----- Comments -----
+// Collapse state survives comment-tree refetches (reply/edit reload remounts the
+// tree); keyed by comment id, module scope = kept while the SPA session lives.
+const collapsedComments = new Set<string>();
+const countReplies = (c: any): number => (c.replies ?? []).reduce((n: number, r: any) => n + 1 + countReplies(r), 0);
+
 function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(collapsedComments.has(c.id));
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    if (next) collapsedComments.add(c.id); else collapsedComments.delete(c.id);
+  };
+  const hidden = countReplies(c);
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(c.body);
@@ -249,14 +260,15 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
 
   return (
     <div style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button onClick={() => setCollapsed(!collapsed)} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex" }}>
+      <div onClick={toggleCollapsed} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }} title={collapsed ? "Expand thread" : "Collapse thread"}>
+        <button style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex" }} aria-label={collapsed ? "Expand thread" : "Collapse thread"}>
           {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
         <Avatar seed={c.author} size={22} t={t} />
         <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{c.author}</span>
         {c.flair && <span style={{ background: t.link, color: t.bg, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4 }}>{c.flair}</span>}
         <span style={{ fontSize: 12, color: t.muted }}>· {c.when}</span>
+        {collapsed && <span style={{ fontSize: 12, color: t.muted, fontStyle: "italic" }}>{hidden > 0 ? `· ${hidden} ${hidden === 1 ? "reply" : "replies"} hidden` : "· collapsed"}</span>}
       </div>
       {!collapsed && (
         <div style={{ paddingLeft: 30 }}>
