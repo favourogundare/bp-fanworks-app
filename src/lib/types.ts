@@ -37,19 +37,24 @@ export interface UiPinned {
   comments: number
 }
 
-export interface UiProfile {
+// Lean fields for the username hover card — a subset of UiProfile that a
+// preview needs, without a full profile-page fetch (posts, follower counts).
+export interface UiUserPreview {
   id: string
   username: string
   display: string
   flair: string | null
+  age: string
+  isMod: boolean
+}
+
+export interface UiProfile extends UiUserPreview {
   banner: string
   followers: number
   karma: string
   contributions: number
-  age: string
   gold: number
   achievements: string
   unlocked: number
-  isMod: boolean
   posts: UiPost[]
 }

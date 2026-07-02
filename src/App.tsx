@@ -17,6 +17,7 @@ import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
+import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -223,7 +224,7 @@ function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }
 }
 
 // ----- Comments -----
-function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
+function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -231,6 +232,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const mine = !!myUsername && c.author === myUsername;
+  const hoverHandlers = useUsernameHoverCard(c.author);
 
   const saveEdit = async () => {
     const body = draft.trim();
@@ -254,7 +256,11 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
           {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
         <Avatar seed={c.author} size={22} t={t} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{c.author}</span>
+        {c.deleted ? (
+          <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{c.author}</span>
+        ) : (
+          <span onClick={() => onAuthor?.(c.author)} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.text, cursor: "pointer" }}>{c.author}</span>
+        )}
         {c.flair && <span style={{ background: t.link, color: t.bg, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4 }}>{c.flair}</span>}
         <span style={{ fontSize: 12, color: t.muted }}>· {c.when}</span>
       </div>
@@ -281,7 +287,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Share2 size={14} /> Share</span>
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
-          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} />)}
+          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
         </div>
       )}
       {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Your comment will show as “[deleted]”. Replies to it stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
@@ -299,6 +305,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
+  const hoverHandlers = useUsernameHoverCard(post.author);
 
   const saveEdit = async () => {
     const tt = title.trim();
@@ -317,14 +324,14 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   if (muted) {
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", color: t.muted, fontSize: 13, fontStyle: "italic" }}>
       Post hidden — you muted{" "}
-      <span onClick={() => onAuthor(post.author)} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700 }}>{post.author}</span>. Open their profile to unmute.
+      <span onClick={() => onAuthor(post.author)} {...hoverHandlers} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700 }}>{post.author}</span>. Open their profile to unmute.
     </div>;
   }
   return (
     <div style={{ borderBottom: `1px solid ${t.border}`, padding: "16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }} onClick={() => onOpen(post)}>
         <Avatar seed={post.author} size={26} t={t} />
-        <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
+        <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
         {post.pinned && <Pin size={13} color={t.accent} />}
         {mine && (
@@ -680,6 +687,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
+  const hoverHandlers = useUsernameHoverCard(post.author);
 
   const saveEdit = async () => {
     const tt = title.trim();
@@ -715,7 +723,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             </div>
           )}
         </div>
-        <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)}>{post.author}</div>
+        <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)} {...hoverHandlers}>{post.author}</div>
         {editing ? (
           <div style={{ marginBottom: 14 }}>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
@@ -743,7 +751,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         </div>
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
-        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} />)}</div>
+        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />)}</div>
       </div>
       <div><CommunitySidebar t={t} /></div>
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
@@ -936,6 +944,7 @@ function AppLayout() {
 
       {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} onCreated={loadFeed} />}
       {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
+      <UserHoverCardHost t={t} myUsername={myUsername} />
     </div>
   );
 }
