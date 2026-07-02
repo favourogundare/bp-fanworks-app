@@ -89,12 +89,16 @@ const OP_REASONING =
 // migration 0002) and are fetched via src/lib/api.ts.
 
 // ----- Atoms -----
-function Flair({ flairKey }) {
+// plain: non-navigating chip for picker contexts (CreatePostModal, ModBar
+// re-flair) where a wrapping span owns the click to toggle selection.
+function Flair({ flairKey, plain = false }: any) {
   const f = POST_FLAIRS[flairKey];
   const navigate = useNavigate();
   if (!f) return null;
+  const base = { background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 };
+  if (plain) return <span style={base}>{f.label}</span>;
   return <span onClick={(e) => { e.stopPropagation(); navigate(`/t/${flairKey}`); }} title={`See all ${f.label} posts`}
-    style={{ background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{f.label}</span>;
+    style={{ ...base, cursor: "pointer" }}>{f.label}</span>;
 }
 
 function Avatar({ seed, size = 36, t }) {
@@ -488,7 +492,7 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {Object.keys(POST_FLAIRS).map((k) => {
             const on = flairs.includes(k);
-            return <span key={k} onClick={() => toggleFlair(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} /></span>;
+            return <span key={k} onClick={() => toggleFlair(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>;
           })}
         </div>
         {isMedia && (
@@ -666,7 +670,7 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
       <button onClick={() => { if (window.confirm("Remove this post?")) run(async () => { await modRemovePost(post.id); onRemoved?.(); }); }} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
       {reflair && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
-          {Object.keys(POST_FLAIRS).map((k) => { const on = sel.includes(k); return <span key={k} onClick={() => toggle(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.5 }}><Flair flairKey={k} /></span>; })}
+          {Object.keys(POST_FLAIRS).map((k) => { const on = sel.includes(k); return <span key={k} onClick={() => toggle(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.5 }}><Flair flairKey={k} plain /></span>; })}
           <button onClick={() => run(async () => { await modSetPostFlairs(post.id, sel); setReflair(false); onChanged?.(); })} disabled={busy} style={{ ...modBtn(t), background: t.accent, color: t.accentText }}>Save flairs</button>
         </div>
       )}
