@@ -654,6 +654,7 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
   const [reflair, setReflair] = useState(false);
   const [sel, setSel] = useState<string[]>(post.flairs || []);
   const [busy, setBusy] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const run = async (fn: any) => { setBusy(true); try { await fn(); } catch (e) { console.error("mod action failed", e); } finally { setBusy(false); } };
   const toggle = (k: string) => setSel((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   return (
@@ -661,7 +662,12 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
       <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.heading, fontSize: 12, fontWeight: 800 }}><Shield size={13} /> MOD</span>
       <button onClick={() => run(async () => { await modSetPinned(post.id, !post.pinned); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Pin size={13} /> {post.pinned ? "Unpin" : "Pin"}</button>
       <button onClick={() => setReflair(!reflair)} style={modBtn(t)}>Re-flair</button>
-      <button onClick={() => { if (window.confirm("Remove this post?")) run(async () => { await modRemovePost(post.id); onRemoved?.(); }); }} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      <button onClick={() => setConfirmingRemove(true)} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      {confirmingRemove && (
+        <ConfirmDialog t={t} title="Remove post?" message="This removes the post from the community as a moderator action." confirmLabel="Remove" busy={busy}
+          onClose={() => setConfirmingRemove(false)}
+          onConfirm={() => run(async () => { await modRemovePost(post.id); setConfirmingRemove(false); onRemoved?.(); })} />
+      )}
       {reflair && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
           {Object.keys(POST_FLAIRS).map((k) => { const on = sel.includes(k); return <span key={k} onClick={() => toggle(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.5 }}><Flair flairKey={k} /></span>; })}
