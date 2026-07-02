@@ -17,6 +17,7 @@ import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
+import { useBreakpoint } from "./lib/useBreakpoint";
 
 /*
   BLACK PANTHER FANWORKS — single-community prototype
@@ -610,19 +611,27 @@ function ChatDrawer({ t, target, onClose }) {
 }
 
 // ----- Pages -----
+// Shared feed/post layout: two columns on desktop & tablet, single column
+// (sidebar stacks below) on phone. Desktop returns the original values.
+function contentGrid(bp: "phone" | "tablet" | "desktop"): React.CSSProperties {
+  const cols = bp === "phone" ? "1fr" : bp === "tablet" ? "1fr 300px" : "1fr 320px";
+  return { display: "grid", gridTemplateColumns: cols, gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" };
+}
+
 function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, myUsername, onChanged }: any) {
+  const bp = useBreakpoint();
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
+    <div style={contentGrid(bp)}>
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "20px 0" }}>
           <img src="/bpf-home.png" alt={community.name}
             style={{ width: 72, height: 72, borderRadius: "50%", border: `2px solid ${t.accent}`, objectFit: "cover", flexShrink: 0, display: "block" }} />
-          <h1 style={{ color: t.heading, fontSize: 34, fontWeight: 800, margin: 0, letterSpacing: 0.3 }}>{community.name}</h1>
+          <h1 style={{ color: t.heading, fontSize: bp === "phone" ? 24 : 34, fontWeight: 800, margin: 0, letterSpacing: 0.3 }}>{community.name}</h1>
         </div>
         {pinned.length > 0 && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.heading, fontSize: 14, fontWeight: 700, padding: "8px 0" }}><Pin size={15} /> Community highlights</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: bp === "phone" ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 8 }}>
               {pinned.map((p) => (
                 <div key={p.id} onClick={() => onOpen(p)} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 14, cursor: "pointer" }}>
                   <div style={{ color: t.text, fontWeight: 700, fontSize: 14, marginBottom: 24 }}>{p.title}</div>
@@ -673,6 +682,7 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
 }
 
 function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
+  const bp = useBreakpoint();
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(post.title);
@@ -696,7 +706,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
+    <div style={contentGrid(bp)}>
       <div style={{ paddingTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <button onClick={onBack} style={{ background: t.panel2, border: "none", borderRadius: "50%", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><ArrowLeft size={18} /></button>
@@ -879,6 +889,8 @@ function AppLayout() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const bp = useBreakpoint();
+  const phone = bp === "phone";
   const t = location.pathname.startsWith("/user") ? neutral : gold;
 
   // Resolve the current member's identity (username, mod flag) for the shell.
@@ -917,16 +929,16 @@ function AppLayout() {
 
   return (
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30 }}>
-        <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: 17, cursor: "pointer" }}>{community.name}</button>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 999, padding: "7px 14px", maxWidth: 420 }}>
-          <Search size={16} color={t.muted} /><input placeholder="Search" style={{ background: "none", border: "none", outline: "none", color: t.text, flex: 1 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30, flexWrap: phone ? "wrap" : "nowrap" }}>
+        <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: phone ? 15 : 17, cursor: "pointer", padding: phone ? 0 : undefined }}>{community.name}</button>
+        <div style={{ flex: phone ? "1 1 100%" : 1, display: "flex", alignItems: "center", gap: 8, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 999, padding: "7px 14px", maxWidth: phone ? "100%" : 420, ...(phone ? { order: 3 } : null) }}>
+          <Search size={16} color={t.muted} /><input placeholder="Search" style={{ background: "none", border: "none", outline: "none", color: t.text, flex: 1, minWidth: 0 }} />
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} /> Create Post</button>
-          <button onClick={() => { setChatTarget(null); setShowChat(true); }} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
+          <button onClick={() => setShowCreate(true)} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
+          <button onClick={() => { setChatTarget(null); setShowChat(true); }} aria-label="Messages" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
           <button onClick={() => goUser(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
-          <button onClick={signOut} title="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
+          <button onClick={signOut} title="Sign out" aria-label="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
         </div>
       </div>
 
