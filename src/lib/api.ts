@@ -264,6 +264,97 @@ export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
     .map(mapPost)
 }
 
+// ----- saved / bookmarked items (private, RLS-scoped to the saver) -----
+
+/** Whether the signed-in member has saved this target. */
+export async function getMySaved(targetType: VoteTarget, targetId: string): Promise<boolean> {
+  const me = await getMyProfileId()
+  if (!me) return false
+  const { data } = await supabase
+    .from('saved_items')
+    .select('target_id')
+    .match({ saver_id: me, target_type: targetType, target_id: targetId })
+    .maybeSingle()
+  return !!data
+}
+
+/** Save (on=true) or unsave a post/comment. */
+export async function toggleSaved(targetType: VoteTarget, targetId: string, on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (on) {
+    const { error } = await supabase
+      .from('saved_items')
+      .upsert({ saver_id: me, target_type: targetType, target_id: targetId }, { onConflict: 'saver_id,target_type,target_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('saved_items')
+      .delete()
+      .match({ saver_id: me, target_type: targetType, target_id: targetId })
+    if (error) throw error
+  }
+}
+
+/** The member's saved posts, most recently saved first. */
+export async function fetchSavedPosts(): Promise<UiPost[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data: saves } = await supabase
+    .from('saved_items')
+    .select('target_id, created_at')
+    .eq('saver_id', me)
+    .eq('target_type', 'post')
+    .order('created_at', { ascending: false })
+  const ids = (saves ?? []).map((s: Row) => s.target_id)
+  if (!ids.length) return []
+  const { data, error } = await supabase.from('posts').select(POST_FIELDS).in('id', ids)
+  if (error) throw error
+  const order = new Map(ids.map((id: string, i: number) => [id, i]))
+  return (data ?? [])
+    .sort((a: Row, b: Row) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    .map(mapPost)
+}
+
+export interface SavedComment {
+  id: string
+  postId: string
+  postTitle: string
+  author: string
+  when: string
+  body: string
+}
+
+/** The member's saved comments as snippets linking back to their posts. */
+export async function fetchSavedComments(): Promise<SavedComment[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data: saves } = await supabase
+    .from('saved_items')
+    .select('target_id, created_at')
+    .eq('saver_id', me)
+    .eq('target_type', 'comment')
+    .order('created_at', { ascending: false })
+  const ids = (saves ?? []).map((s: Row) => s.target_id)
+  if (!ids.length) return []
+  const { data, error } = await supabase
+    .from('comments')
+    .select('id, post_id, body, created_at, author:profiles(username), post:posts(title)')
+    .in('id', ids)
+  if (error) throw error
+  const order = new Map(ids.map((id: string, i: number) => [id, i]))
+  return (data ?? [])
+    .sort((a: Row, b: Row) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    .map((r: Row) => ({
+      id: r.id,
+      postId: r.post_id,
+      postTitle: r.post?.title ?? '',
+      author: r.author?.username ?? 'unknown',
+      when: timeAgo(r.created_at),
+      body: r.body ?? '',
+    }))
+}
+
 /** Full-text search over community posts (title + body, websearch syntax). */
 export async function searchPosts(query: string): Promise<UiPost[]> {
   const q = query.trim()
