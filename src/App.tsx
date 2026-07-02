@@ -4,7 +4,7 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut, Pencil, ExternalLink,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
@@ -17,6 +17,9 @@ import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
+import { goldPair, neutralPair } from "./lib/palettes";
+import type { Palette } from "./lib/palettes";
+import { useTheme } from "./lib/theme";
 import { useBreakpoint } from "./lib/useBreakpoint";
 
 /*
@@ -30,22 +33,6 @@ import { useBreakpoint } from "./lib/useBreakpoint";
   Community + post pages use the black-gold theme.
   The MEMBER page keeps the neutral Reddit-dark theme, by request.
 */
-
-// ----- Palettes -----
-// Community + post pages: black & golden-jaguar.
-const gold = {
-  bg: "#0B0B0F", panel: "#15141a", panel2: "#1F1E26", border: "#2e2b22",
-  text: "#ECE8DF", muted: "#9b9488", heading: "#C8A24A", link: "#57D7E3",
-  pill: "#221f18", pillText: "#cdbf9c", orange: "#FF4500", accent: "#C8A24A",
-  accentText: "#15110a",
-};
-// Member page: neutral Reddit-dark (unchanged).
-const neutral = {
-  bg: "#0b0b0c", panel: "#161617", panel2: "#1d1d1f", border: "#2b2b2d",
-  text: "#d7dadc", muted: "#838488", heading: "#d7dadc", link: "#7cb3ff",
-  pill: "#272729", pillText: "#b8b9bb", orange: "#ff4500", accent: "#ff4500",
-  accentText: "#ffffff",
-};
 
 // ----- Community -----
 const community = {
@@ -1013,9 +1000,10 @@ function AppLayout() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const { mode, toggleTheme } = useTheme();
   const bp = useBreakpoint();
   const phone = bp === "phone";
-  const t = location.pathname.startsWith("/user") ? neutral : gold;
+  const t = (location.pathname.startsWith("/user") ? neutralPair : goldPair)[mode];
 
   // Resolve the current member's identity (username, mod flag, content prefs) for the shell.
   const refreshIdentity = () => fetchMyIdentity().then((id) => {
@@ -1061,6 +1049,10 @@ function AppLayout() {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} aria-label="Messages" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
+          <button onClick={toggleTheme} title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
+            {mode === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+
           <button onClick={() => goUser(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
           <button onClick={signOut} title="Sign out" aria-label="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
         </div>
@@ -1125,19 +1117,25 @@ function MemberRoute() {
 }
 
 // ----- Auth gate + route table -----
-const centered: React.CSSProperties = { minHeight: "100vh", background: "#0B0B0F", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, system-ui, sans-serif" };
+function centeredStyle(t: Palette): React.CSSProperties {
+  return { minHeight: "100vh", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, system-ui, sans-serif" };
+}
 
 function Splash() {
-  return <div style={centered}><div style={{ color: "#9b9488", fontSize: 14 }}>Loading…</div></div>;
+  const { mode } = useTheme();
+  const t = goldPair[mode];
+  return <div style={centeredStyle(t)}><div style={{ color: t.muted, fontSize: 14 }}>Loading…</div></div>;
 }
 
 function SetupNotice() {
-  const code = { background: "#1F1E26", borderRadius: 4, padding: "1px 6px", fontSize: 13, color: "#C8A24A" } as const;
+  const { mode } = useTheme();
+  const t = goldPair[mode];
+  const code = { background: t.panel2, borderRadius: 4, padding: "1px 6px", fontSize: 13, color: t.heading } as const;
   return (
-    <div style={centered}>
-      <div style={{ maxWidth: 460, background: "#15141a", border: "1px solid #2e2b22", borderRadius: 16, padding: 24, color: "#ECE8DF" }}>
-        <h1 style={{ color: "#C8A24A", fontSize: 20, margin: "0 0 12px" }}>Almost there</h1>
-        <p style={{ color: "#9b9488", fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+    <div style={centeredStyle(t)}>
+      <div style={{ maxWidth: 460, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, padding: 24, color: t.text }}>
+        <h1 style={{ color: t.heading, fontSize: 20, margin: "0 0 12px" }}>Almost there</h1>
+        <p style={{ color: t.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
           Add your Supabase anon key to <code style={code}>.env</code> as <code style={code}>VITE_SUPABASE_ANON_KEY</code>,
           then restart the dev server.
         </p>

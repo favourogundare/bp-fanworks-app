@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { goldPair, pawGradient } from '../lib/palettes'
+import { useTheme } from '../lib/theme'
 
 // Landing page for the link in the password-reset email. Supabase processes the
 // recovery token in the URL on load (detectSessionInUrl) and establishes a
 // short-lived session; we then let the member set a new password.
-const c = {
-  bg: '#0B0B0F', panel: '#15141a', border: '#2e2b22', text: '#ECE8DF',
-  muted: '#9b9488', heading: '#C8A24A', accent: '#C8A24A', accentText: '#15110a',
-  error: '#e0726b', ok: '#8fce9b',
-}
 
 export function ResetPasswordPage() {
+  const { mode: themeMode } = useTheme()
+  const c = goldPair[themeMode]
   const [ready, setReady] = useState(false) // a recovery session is present
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -37,6 +36,17 @@ export function ResetPasswordPage() {
       setTimeout(() => { window.location.assign('/') }, 1600)
     }
   }
+
+  const page: CSSProperties = { minHeight: '100vh', background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: 'Inter, system-ui, sans-serif' }
+  const card: CSSProperties = { width: 380, maxWidth: '100%', background: c.panel, border: `1px solid ${c.border}`, borderRadius: 16, padding: 24, boxSizing: 'border-box' }
+  const paw: CSSProperties = {
+    width: 44, height: 44, borderRadius: '50%',
+    background: pawGradient[themeMode],
+    border: `2px solid ${c.accent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0,
+  }
+  const label: CSSProperties = { display: 'block', color: c.muted, fontSize: 12, fontWeight: 600, margin: '12px 0 4px' }
+  const input: CSSProperties = { width: '100%', background: c.bg, border: `1px solid ${c.border}`, borderRadius: 10, padding: '10px 12px', color: c.text, fontSize: 14, boxSizing: 'border-box' }
+  const submitBtn: CSSProperties = { width: '100%', marginTop: 18, background: c.accent, color: c.accentText, border: 'none', borderRadius: 999, padding: '11px 0', fontSize: 14, fontWeight: 800, cursor: 'pointer' }
 
   return (
     <div style={page}>
@@ -69,10 +79,3 @@ export function ResetPasswordPage() {
     </div>
   )
 }
-
-const page: CSSProperties = { minHeight: '100vh', background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: 'Inter, system-ui, sans-serif' }
-const card: CSSProperties = { width: 380, maxWidth: '100%', background: c.panel, border: `1px solid ${c.border}`, borderRadius: 16, padding: 24, boxSizing: 'border-box' }
-const paw: CSSProperties = { width: 44, height: 44, borderRadius: '50%', background: 'radial-gradient(circle at 35% 30%, #2a2a2e, #050505)', border: `2px solid ${c.accent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }
-const label: CSSProperties = { display: 'block', color: c.muted, fontSize: 12, fontWeight: 600, margin: '12px 0 4px' }
-const input: CSSProperties = { width: '100%', background: c.bg, border: `1px solid ${c.border}`, borderRadius: 10, padding: '10px 12px', color: c.text, fontSize: 14, boxSizing: 'border-box' }
-const submitBtn: CSSProperties = { width: '100%', marginTop: 18, background: c.accent, color: c.accentText, border: 'none', borderRadius: 999, padding: '11px 0', fontSize: 14, fontWeight: 800, cursor: 'pointer' }
