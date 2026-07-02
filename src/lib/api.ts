@@ -246,6 +246,39 @@ export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost
   return rows.map(mapPost)
 }
 
+/** Community posts carrying the given flair slug, newest first (for /t/:slug). */
+export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
+  // Rooted at the join table: one row per (post, matched flair), so posts with
+  // several flairs can't come back duplicated (which an !inner embed on posts
+  // does). Client-side sort because PostgREST can't order parents by embed cols.
+  const { data, error } = await supabase
+    .from('post_flairs')
+    .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
+    .eq('flairs.slug', slug)
+    .eq('post.surface', 'community')
+  if (error) throw error
+  return (data ?? [])
+    .map((r: Row) => r.post)
+    .filter(Boolean)
+    .sort((a: Row, b: Row) => (a.created_at < b.created_at ? 1 : -1))
+    .map(mapPost)
+}
+
+/** Full-text search over community posts (title + body, websearch syntax). */
+export async function searchPosts(query: string): Promise<UiPost[]> {
+  const q = query.trim()
+  if (!q) return []
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('surface', 'community')
+    .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
+    .order('created_at', { ascending: false }) // ponytail: recency order; ts_rank needs an RPC if relevance ordering matters later
+    .limit(50)
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
 /** Pinned "Community highlights" cards. */
 export async function fetchPinned(): Promise<UiPinned[]> {
   const { data, error } = await supabase
