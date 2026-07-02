@@ -215,7 +215,8 @@ function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }
     <div style={{ marginTop: 8 }}>
       <textarea value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder || "Add a comment…"} rows={3}
         style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+        <span style={{ color: t.muted, fontSize: 11, marginRight: "auto" }}>{val.includes(">!") ? "Spoiler markup active" : "Tip: >!text!< hides a spoiler"}</span>
         {onCancel && <button onClick={onCancel} style={{ background: "transparent", color: t.muted, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Cancel</button>}
         <button onClick={submit} disabled={busy || !val.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "6px 16px", cursor: "pointer", fontSize: 13, fontWeight: 800, opacity: busy || !val.trim() ? 0.6 : 1 }}>{busy ? "Posting…" : "Comment"}</button>
       </div>
@@ -224,6 +225,27 @@ function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }
 }
 
 // ----- Comments -----
+// Reddit-style spoiler markup: >!hidden text!< renders blurred until clicked.
+// Body text stays plain text (React escapes it) — this only wraps matched
+// segments in a reveal-on-click span.
+function Spoiler({ text, t }: any) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span onClick={(e) => { e.stopPropagation(); setShown(true); }} title={shown ? undefined : "Show spoiler"}
+      style={shown ? { background: t.pill, borderRadius: 4, padding: "0 4px" }
+        : { background: t.pill, color: "transparent", borderRadius: 4, padding: "0 4px", cursor: "pointer", textShadow: "none", userSelect: "none" }}>
+      {text}
+    </span>
+  );
+}
+
+function renderSpoilers(body: string, t: any) {
+  const parts = body.split(/>!(.+?)!</gs);
+  if (parts.length === 1) return body;
+  // split with a capture group alternates: [plain, spoiler, plain, spoiler, ...]
+  return parts.map((seg, i) => (i % 2 === 1 ? <Spoiler key={i} text={seg} t={t} /> : seg));
+}
+
 // Collapse state survives comment-tree refetches (reply/edit reload remounts the
 // tree); keyed by comment id, module scope = kept while the SPA session lives.
 const collapsedComments = new Set<string>();
@@ -288,7 +310,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
               </div>
             </div>
           ) : (
-            <p style={{ fontSize: 14, color: c.deleted ? t.muted : t.text, fontStyle: c.deleted ? "italic" : "normal", whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.body}</p>
+            <p style={{ fontSize: 14, color: c.deleted ? t.muted : t.text, fontStyle: c.deleted ? "italic" : "normal", whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.deleted ? c.body : renderSpoilers(c.body, t)}</p>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
