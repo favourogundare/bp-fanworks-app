@@ -8,6 +8,7 @@ export interface UiComment {
   flair: string | null // "OP" when the commenter is the post's author
   body: string
   votes: number
+  deleted?: boolean // soft-deleted: body/author blanked, thread preserved
   replies: UiComment[]
 }
 
@@ -42,6 +43,10 @@ export interface UiProfile {
   display: string
   flair: string | null
   banner: string
+  avatarUrl: string | null
+  ao3: string | null // AO3 profile link
+  kofi: string | null // Ko-fi link
+  blurMedia: boolean // personal pref: blur NSFW/spoiler media
   followers: number
   karma: string
   contributions: number
