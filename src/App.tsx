@@ -12,6 +12,7 @@ import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment } from "./lib/api";
+import type { FeedSort } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -610,7 +611,7 @@ function ChatDrawer({ t, target, onClose }) {
 }
 
 // ----- Pages -----
-function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, myUsername, onChanged }: any) {
+function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, myUsername, onChanged }: any) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
       <div>
@@ -632,6 +633,13 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
             </div>
           </>
         )}
+        <div style={{ display: "flex", gap: 8, padding: "8px 0" }}>
+          {(["new", "hot", "top"] as const).map((k) => (
+            <button key={k} onClick={() => onSort(k)} style={relBtn(t, sort === k)}>
+              {k[0].toUpperCase() + k.slice(1)}
+            </button>
+          ))}
+        </div>
         {loading ? (
           <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading posts…</div>
         ) : posts.length === 0 ? (
@@ -874,6 +882,7 @@ function AppLayout() {
   const [feed, setFeed] = useState<UiPost[]>([]);
   const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
+  const [sort, setSort] = useState<FeedSort>("new");
   const [myUsername, setMyUsername] = useState<string | null>(null);
   const [myIsMod, setMyIsMod] = useState(false);
 
@@ -890,13 +899,14 @@ function AppLayout() {
   }, [user?.id]);
 
   // Load the community feed + pinned highlights (callable, so new posts refresh it).
-  const loadFeed = async () => {
+  const loadFeed = async (s: FeedSort = sort) => {
     try {
-      const [f, p] = await Promise.all([fetchCommunityFeed(), fetchPinned()]);
+      const [f, p] = await Promise.all([fetchCommunityFeed(s), fetchPinned()]);
       setFeed(f); setPinned(p);
     } catch (e) { console.error("feed load failed", e); }
     finally { setFeedLoading(false); }
   };
+  const changeSort = (s: FeedSort) => { setSort(s); setFeedLoading(true); loadFeed(s); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadFeed(); }, []);
 
@@ -913,7 +923,7 @@ function AppLayout() {
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, loadFeed };
 
   return (
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
@@ -944,7 +954,7 @@ function AppLayout() {
 function LandingRoute() {
   const c: any = useOutletContext();
   useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
-  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
+  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
 }
 
 function PostRoute() {
