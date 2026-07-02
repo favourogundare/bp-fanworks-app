@@ -219,16 +219,31 @@ export async function fetchCommunityStats(): Promise<{ members: number; contribu
   return { members: membersRes.count ?? 0, contributions: contribRes.count ?? 0 }
 }
 
-/** Newest community posts (excludes pinned highlights). */
-export async function fetchCommunityFeed(): Promise<UiPost[]> {
-  const { data, error } = await supabase
+export type FeedSort = 'hot' | 'top' | 'new'
+
+// ponytail: Reddit hot algorithm; tune 45000 (≈12.5h window) if feed feels stale/churny
+function hotScore(row: Row): number {
+  const s = row.vote_score ?? 0
+  const order = Math.log10(Math.max(Math.abs(s), 1))
+  const sign = s > 0 ? 1 : s < 0 ? -1 : 0
+  const secs = new Date(row.created_at).getTime() / 1000 - 1_600_000_000 // epoch offset keeps numbers small
+  return order * sign + secs / 45000
+}
+
+/** Community posts by sort (excludes pinned highlights). */
+export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost[]> {
+  const q = supabase
     .from('posts')
     .select(POST_FIELDS)
     .eq('surface', 'community')
     .eq('pinned', false)
-    .order('created_at', { ascending: false })
+  if (sort === 'top') q.order('vote_score', { ascending: false }).order('created_at', { ascending: false })
+  else q.order('created_at', { ascending: false }) // 'new' and 'hot' both start newest-first
+  const { data, error } = await q
   if (error) throw error
-  return (data ?? []).map(mapPost)
+  const rows = data ?? []
+  if (sort === 'hot') rows.sort((a, b) => hotScore(b) - hotScore(a)) // ponytail: client sort, feed unpaginated & small
+  return rows.map(mapPost)
 }
 
 /** Pinned "Community highlights" cards. */
