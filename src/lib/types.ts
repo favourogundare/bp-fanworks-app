@@ -8,6 +8,7 @@ export interface UiComment {
   flair: string | null // "OP" when the commenter is the post's author
   body: string
   votes: number
+  deleted?: boolean // soft-deleted: body/author blanked, thread preserved
   replies: UiComment[]
 }
 

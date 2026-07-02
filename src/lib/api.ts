@@ -101,6 +101,37 @@ export async function createComment(input: {
   if (error) throw error
 }
 
+// ----- editing / deleting own content (RLS enforces ownership) -----
+export async function updatePost(id: string, fields: { title: string; body: string }): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ title: fields.title, body: fields.body })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function deletePost(id: string): Promise<void> {
+  const { error } = await supabase.from('posts').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function updateComment(id: string, body: string): Promise<void> {
+  const { error } = await supabase.from('comments').update({ body }).eq('id', id)
+  if (error) throw error
+}
+
+// Soft delete: keep the row (blank its body, stamp deleted_at) so child replies
+// survive. Hard-deleting would cascade to replies via comments.parent_id and
+// destroy other members' content. RLS comments_update_own restricts this to the
+// comment's author, same path as an edit. (See migration 0008.)
+export async function deleteComment(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('comments')
+    .update({ body: '[deleted]', deleted_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+}
+
 /** Upload files to the public post-media bucket; returns their public URLs. */
 export async function uploadMedia(files: File[]): Promise<string[]> {
   const urls: string[] = []
@@ -221,13 +252,15 @@ function buildCommentTree(rows: Row[], postAuthorId: string): UiComment[] {
   const nodes = new Map<string, UiComment>()
   const roots: UiComment[] = []
   for (const r of rows) {
+    const deleted = !!r.deleted_at
     nodes.set(r.id, {
       id: r.id,
-      author: r.author?.username ?? 'unknown',
+      author: deleted ? '[deleted]' : (r.author?.username ?? 'unknown'),
       when: timeAgo(r.created_at),
-      flair: r.author_id === postAuthorId ? 'OP' : null,
-      body: r.body,
+      flair: deleted ? null : (r.author_id === postAuthorId ? 'OP' : null),
+      body: deleted ? '[deleted]' : r.body,
       votes: r.vote_score ?? 0,
+      deleted,
       replies: [],
     })
   }
@@ -255,7 +288,7 @@ export async function fetchPostWithComments(id: string): Promise<UiPost> {
 
   const { data: comments, error: cErr } = await supabase
     .from('comments')
-    .select('id, body, vote_score, parent_id, created_at, author_id, author:profiles(username)')
+    .select('id, body, vote_score, parent_id, created_at, author_id, deleted_at, author:profiles(username)')
     .eq('post_id', id)
     .order('created_at', { ascending: true })
   if (cErr) throw cErr

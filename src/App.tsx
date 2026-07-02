@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -144,6 +144,22 @@ function copyPostLink(id: string) {
   if (navigator.clipboard) navigator.clipboard.writeText(url).catch(() => {});
 }
 
+// In-app confirmation modal (replaces native window.confirm for destructive actions).
+function ConfirmDialog({ t, title, message, confirmLabel = "Delete", onConfirm, onClose, busy }: any) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={busy ? undefined : onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, width: 380, maxWidth: "100%", padding: 20 }}>
+        <h3 style={{ color: t.text, margin: "0 0 8px", fontSize: 16, fontWeight: 800 }}>{title}</h3>
+        <p style={{ color: t.muted, fontSize: 14, lineHeight: 1.5, margin: "0 0 16px" }}>{message}</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onClose} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
+          <button onClick={onConfirm} disabled={busy} style={{ background: "#e0726b", color: "#1a0b0b", border: "none", borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13, opacity: busy ? 0.6 : 1 }}>{busy ? "Deleting…" : confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Themed member flairs (must match the slugs seeded in migration 0001).
 const MEMBER_FLAIRS = [
   { slug: "dora-milaje", label: "Dora Milaje" },
@@ -207,9 +223,30 @@ function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }
 }
 
 // ----- Comments -----
-function Comment({ c, t, depth = 0, postId, onAdded }: any) {
+function Comment({ c, t, depth = 0, postId, onAdded, myUsername }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [replying, setReplying] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(c.body);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const mine = !!myUsername && c.author === myUsername;
+
+  const saveEdit = async () => {
+    const body = draft.trim();
+    if (!body || body === c.body) { setEditing(false); return; }
+    setBusy(true);
+    try { await updateComment(c.id, body); setEditing(false); onAdded?.(); }
+    catch (e) { console.error("comment edit failed", e); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await deleteComment(c.id); onAdded?.(); }
+    catch (e) { console.error("comment delete failed", e); }
+    finally { setBusy(false); setConfirming(false); }
+  };
+
   return (
     <div style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -223,24 +260,60 @@ function Comment({ c, t, depth = 0, postId, onAdded }: any) {
       </div>
       {!collapsed && (
         <div style={{ paddingLeft: 30 }}>
-          <p style={{ fontSize: 14, color: t.text, whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.body}</p>
+          {editing ? (
+            <div style={{ marginTop: 8 }}>
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3}
+                style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+                <button onClick={() => { setDraft(c.body); setEditing(false); }} style={{ background: "transparent", color: t.muted, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Cancel</button>
+                <button onClick={saveEdit} disabled={busy || !draft.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "6px 16px", cursor: "pointer", fontSize: 13, fontWeight: 800, opacity: busy || !draft.trim() ? 0.6 : 1 }}>{busy ? "Saving…" : "Save"}</button>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: 14, color: c.deleted ? t.muted : t.text, fontStyle: c.deleted ? "italic" : "normal", whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.body}</p>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
             <span onClick={() => setReplying(!replying)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><MessageCircle size={14} /> Reply</span>
+            {mine && <span onClick={() => setEditing(!editing)} style={{ cursor: "pointer" }}>Edit</span>}
+            {mine && <span onClick={() => setConfirming(true)} style={{ cursor: busy ? "default" : "pointer", color: "#e0726b", opacity: busy ? 0.6 : 1 }}>Delete</span>}
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Share2 size={14} /> Share</span>
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
-          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} />)}
+          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} />)}
         </div>
       )}
+      {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Your comment will show as “[deleted]”. Replies to it stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
   );
 }
 
 // ----- Post card -----
-function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
+function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged }: any) {
   const [followed, setFollowed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(post.title);
+  const [body, setBody] = useState(post.body);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const mine = !!myUsername && post.author === myUsername;
+
+  const saveEdit = async () => {
+    const tt = title.trim();
+    if (!tt) return;
+    setBusy(true);
+    try { await updatePost(post.id, { title: tt, body: body.trim() }); setEditing(false); onChanged?.(); }
+    catch (e) { console.error("post edit failed", e); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await deletePost(post.id); onChanged?.(); }
+    catch (e) { console.error("post delete failed", e); setBusy(false); setConfirming(false); }
+  };
+
   if (muted) {
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", color: t.muted, fontSize: 13, fontStyle: "italic" }}>
       Post hidden — you muted{" "}
@@ -254,8 +327,31 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
         <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
         {post.pinned && <Pin size={13} color={t.accent} />}
-        <MoreHorizontal size={16} color={t.muted} style={{ marginLeft: "auto" }} />
+        {mine && (
+          <div style={{ marginLeft: "auto", position: "relative" }} onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={16} /></button>
+            {menuOpen && (
+              <div style={{ position: "absolute", right: 0, top: 22, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 4, zIndex: 10, minWidth: 110 }}>
+                <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
+                <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
+              </div>
+            )}
+          </div>
+        )}
+        {!mine && <MoreHorizontal size={16} color={t.muted} style={{ marginLeft: "auto" }} />}
       </div>
+      {editing ? (
+        <div style={{ marginBottom: 8 }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
+            style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 8, boxSizing: "border-box", fontSize: 16, fontWeight: 700 }} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={4}
+            style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+            <button onClick={() => { setTitle(post.title); setBody(post.body); setEditing(false); }} style={{ background: "transparent", color: t.muted, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Cancel</button>
+            <button onClick={saveEdit} disabled={busy || !title.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "6px 16px", cursor: "pointer", fontSize: 13, fontWeight: 800, opacity: busy || !title.trim() ? 0.6 : 1 }}>{busy ? "Saving…" : "Save"}</button>
+          </div>
+        </div>
+      ) : (
       <div style={{ cursor: "pointer" }} onClick={() => onOpen(post)}>
         <h3 style={{ fontSize: 19, fontWeight: 700, color: t.text, margin: "0 0 8px" }}>{post.title}</h3>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
@@ -263,6 +359,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
         {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
         <MediaBlock post={post} t={t} />
       </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
         <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} onClick={() => onOpen(post)} />
@@ -281,6 +378,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta }) {
           </div>
         </>
       )}
+      {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
   );
 }
@@ -512,7 +610,7 @@ function ChatDrawer({ t, target, onClose }) {
 }
 
 // ----- Pages -----
-function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading }) {
+function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, myUsername, onChanged }: any) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
       <div>
@@ -539,7 +637,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading }
         ) : posts.length === 0 ? (
           <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No posts yet. Be the first to post!</div>
         ) : (
-          posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta />)
+          posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} />)
         )}
       </div>
       <div><CommunitySidebar t={t} /></div>
@@ -574,7 +672,29 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
   );
 }
 
-function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved }: any) {
+function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(post.title);
+  const [body, setBody] = useState(post.body);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const mine = !!myUsername && post.author === myUsername;
+
+  const saveEdit = async () => {
+    const tt = title.trim();
+    if (!tt) return;
+    setBusy(true);
+    try { await updatePost(post.id, { title: tt, body: body.trim() }); setEditing(false); onCommentAdded?.(); }
+    catch (e) { console.error("post edit failed", e); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await deletePost(post.id); onRemoved?.(); }
+    catch (e) { console.error("post delete failed", e); setBusy(false); setConfirming(false); }
+  };
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
       <div style={{ paddingTop: 16 }}>
@@ -583,13 +703,39 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved 
           <Avatar seed={community.name} size={26} t={t} />
           <span style={{ color: t.heading, fontWeight: 700, fontSize: 13 }}>{community.name}</span>
           <span style={{ color: t.muted, fontSize: 12 }}>· {post.when}</span>
+          {mine && (
+            <div style={{ marginLeft: "auto", position: "relative" }}>
+              <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={18} /></button>
+              {menuOpen && (
+                <div style={{ position: "absolute", right: 0, top: 24, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 4, zIndex: 10, minWidth: 110 }}>
+                  <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
+                  <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)}>{post.author}</div>
+        {editing ? (
+          <div style={{ marginBottom: 14 }}>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
+              style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 8, boxSizing: "border-box", fontSize: 20, fontWeight: 800 }} />
+            <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={6}
+              style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 15 }} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+              <button onClick={() => { setTitle(post.title); setBody(post.body); setEditing(false); }} style={{ background: "transparent", color: t.muted, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Cancel</button>
+              <button onClick={saveEdit} disabled={busy || !title.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "6px 16px", cursor: "pointer", fontSize: 13, fontWeight: 800, opacity: busy || !title.trim() ? 0.6 : 1 }}>{busy ? "Saving…" : "Save"}</button>
+            </div>
+          </div>
+        ) : (
+        <>
         <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
         {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
         <MediaBlock post={post} t={t} />
+        </>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0" }}>
           <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
           <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} />
@@ -597,14 +743,15 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved 
         </div>
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
-        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} />)}</div>
+        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} />)}</div>
       </div>
       <div><CommunitySidebar t={t} /></div>
+      {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
   );
 }
 
-function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged }: any) {
+function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, myUsername }: any) {
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
 
@@ -683,7 +830,7 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
           {profile.posts.length === 0
             ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
-            : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} />)}
+            : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} />)}
         </div>
       </div>
       <div>
@@ -797,7 +944,7 @@ function AppLayout() {
 function LandingRoute() {
   const c: any = useOutletContext();
   useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
-  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} />;
+  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
 }
 
 function PostRoute() {
@@ -813,7 +960,7 @@ function PostRoute() {
     setPageMeta({ title: `${post.title} — ${community.name}`, description: clip(post.body) || community.blurb, image: cover, url: `/post/${post.id}`, type: "article" });
   }, [post]);
   if (!post) return <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 16px", color: c.t.muted, fontSize: 14 }}>Loading…</div>;
-  return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} />;
+  return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} myUsername={c.myUsername} />;
 }
 
 function MemberRoute() {
@@ -828,7 +975,7 @@ function MemberRoute() {
     if (!profile) return;
     setPageMeta({ title: `${profile.display} (@${profile.username}) — ${community.name}`, description: clip(profile.banner) || `${profile.display} on ${community.name}.`, url: `/user/${profile.username}`, type: "profile" });
   }, [profile]);
-  return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} />;
+  return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} myUsername={c.myUsername} />;
 }
 
 // ----- Auth gate + route table -----
