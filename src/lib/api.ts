@@ -31,18 +31,18 @@ export function resetProfileCache() {
   cachedProfileId = null
 }
 
-/** The signed-in member's identity for the app shell: profile id, username, mod flag. */
-export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean } | null> {
+/** The signed-in member's identity for the app shell: profile id, username, mod flag, content prefs. */
+export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean; blurMedia: boolean } | null> {
   const { data: auth } = await supabase.auth.getUser()
   if (!auth.user) return null
   const { data } = await supabase
     .from('profiles')
-    .select('id, username, role')
+    .select('id, username, role, blur_media')
     .eq('user_id', auth.user.id)
     .maybeSingle()
   if (!data) return null
   cachedProfileId = data.id
-  return { profileId: data.id, username: data.username, isMod: data.role === 'mod' }
+  return { profileId: data.id, username: data.username, isMod: data.role === 'mod', blurMedia: data.blur_media ?? true }
 }
 
 // ----- creating posts, comments, and uploading media -----
@@ -219,14 +219,62 @@ export async function fetchCommunityStats(): Promise<{ members: number; contribu
   return { members: membersRes.count ?? 0, contributions: contribRes.count ?? 0 }
 }
 
-/** Newest community posts (excludes pinned highlights). */
-export async function fetchCommunityFeed(): Promise<UiPost[]> {
-  const { data, error } = await supabase
+export type FeedSort = 'hot' | 'top' | 'new'
+
+// ponytail: Reddit hot algorithm; tune 45000 (≈12.5h window) if feed feels stale/churny
+function hotScore(row: Row): number {
+  const s = row.vote_score ?? 0
+  const order = Math.log10(Math.max(Math.abs(s), 1))
+  const sign = s > 0 ? 1 : s < 0 ? -1 : 0
+  const secs = new Date(row.created_at).getTime() / 1000 - 1_600_000_000 // epoch offset keeps numbers small
+  return order * sign + secs / 45000
+}
+
+/** Community posts by sort (excludes pinned highlights). */
+export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost[]> {
+  const q = supabase
     .from('posts')
     .select(POST_FIELDS)
     .eq('surface', 'community')
     .eq('pinned', false)
-    .order('created_at', { ascending: false })
+  if (sort === 'top') q.order('vote_score', { ascending: false }).order('created_at', { ascending: false })
+  else q.order('created_at', { ascending: false }) // 'new' and 'hot' both start newest-first
+  const { data, error } = await q
+  if (error) throw error
+  const rows = data ?? []
+  if (sort === 'hot') rows.sort((a, b) => hotScore(b) - hotScore(a)) // ponytail: client sort, feed unpaginated & small
+  return rows.map(mapPost)
+}
+
+/** Community posts carrying the given flair slug, newest first (for /t/:slug). */
+export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
+  // Rooted at the join table: one row per (post, matched flair), so posts with
+  // several flairs can't come back duplicated (which an !inner embed on posts
+  // does). Client-side sort because PostgREST can't order parents by embed cols.
+  const { data, error } = await supabase
+    .from('post_flairs')
+    .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
+    .eq('flairs.slug', slug)
+    .eq('post.surface', 'community')
+  if (error) throw error
+  return (data ?? [])
+    .map((r: Row) => r.post)
+    .filter(Boolean)
+    .sort((a: Row, b: Row) => (a.created_at < b.created_at ? 1 : -1))
+    .map(mapPost)
+}
+
+/** Full-text search over community posts (title + body, websearch syntax). */
+export async function searchPosts(query: string): Promise<UiPost[]> {
+  const q = query.trim()
+  if (!q) return []
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('surface', 'community')
+    .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
+    .order('created_at', { ascending: false }) // ponytail: recency order; ts_rank needs an RPC if relevance ordering matters later
+    .limit(50)
   if (error) throw error
   return (data ?? []).map(mapPost)
 }
@@ -374,11 +422,59 @@ export async function fetchUserPreview(username: string): Promise<UiUserPreview 
   return mapProfileCore(p)
 }
 
+// ----- profile editing (RLS: own row only; column grant in migrations 0001 + 0009) -----
+
+export const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/
+
+/** Editable profile fields. Username collisions surface as a unique-violation error. */
+export async function updateMyProfile(fields: {
+  username?: string
+  display_name?: string
+  banner?: string
+  avatar_url?: string
+  ao3_url?: string | null
+  kofi_url?: string | null
+  blur_media?: boolean
+}): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (fields.username !== undefined && !USERNAME_RE.test(fields.username))
+    throw new Error('Username must be 3-20 characters: letters, numbers, underscore')
+  // Creator links render as hrefs on public profiles — require https to block
+  // javascript:/data: URLs at the trust boundary.
+  for (const u of [fields.ao3_url, fields.kofi_url])
+    if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
+  const { error } = await supabase.from('profiles').update(fields).eq('id', me)
+  if (error) throw error
+}
+
+/** Upload an avatar image; returns its public URL (avatars/ prefix in post-media bucket). */
+export async function uploadAvatar(file: File): Promise<string> {
+  const path = `avatars/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+  const { error } = await supabase.storage.from('post-media').upload(path, file)
+  if (error) throw error
+  return supabase.storage.from('post-media').getPublicUrl(path).data.publicUrl
+}
+
+/** Members this member has muted or blocked, for the settings panel. */
+export async function fetchMyMutes(): Promise<{ id: string; username: string; type: RelType }[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data } = await supabase
+    .from('relationships')
+    .select('type, target:profiles!relationships_target_id_fkey(id, username)')
+    .eq('actor_id', me)
+    .in('type', ['mute', 'block'])
+  return (data ?? [])
+    .filter((r: Row) => r.target)
+    .map((r: Row) => ({ id: r.target.id, username: r.target.username, type: r.type }))
+}
+
 /** A member profile + their profile-surface posts, with follower/contribution counts. */
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -405,6 +501,10 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
   return {
     ...mapProfileCore(p),
     banner: p.banner || '',
+    avatarUrl: p.avatar_url ?? null,
+    ao3: p.ao3_url ?? null,
+    kofi: p.kofi_url ?? null,
+    blurMedia: p.blur_media ?? true,
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,

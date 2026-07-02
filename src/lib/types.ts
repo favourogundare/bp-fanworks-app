@@ -50,6 +50,10 @@ export interface UiUserPreview {
 
 export interface UiProfile extends UiUserPreview {
   banner: string
+  avatarUrl: string | null
+  ao3: string | null // AO3 profile link
+  kofi: string | null // Ko-fi link
+  blurMedia: boolean // personal pref: blur NSFW/spoiler media
   followers: number
   karma: string
   contributions: number
