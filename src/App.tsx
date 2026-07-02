@@ -6,12 +6,12 @@ import {
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut,
 } from "lucide-react";
-import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext } from "react-router-dom";
+import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, fetchTagFeed, searchPosts } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -91,8 +91,10 @@ const OP_REASONING =
 // ----- Atoms -----
 function Flair({ flairKey }) {
   const f = POST_FLAIRS[flairKey];
+  const navigate = useNavigate();
   if (!f) return null;
-  return <span style={{ background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>{f.label}</span>;
+  return <span onClick={(e) => { e.stopPropagation(); navigate(`/t/${flairKey}`); }} title={`See all ${f.label} posts`}
+    style={{ background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{f.label}</span>;
 }
 
 function Avatar({ seed, size = 36, t }) {
@@ -869,6 +871,7 @@ function AppLayout() {
   const [showChat, setShowChat] = useState(false);
   const [chatTarget, setChatTarget] = useState<{ profileId: string; username: string } | null>(null);
   const [mutedUsers, setMutedUsers] = useState<string[]>([]); // usernames hidden from feed (muted/blocked)
+  const [searchQ, setSearchQ] = useState("");
   const { user, signOut } = useAuth();
 
   const [feed, setFeed] = useState<UiPost[]>([]);
@@ -920,7 +923,9 @@ function AppLayout() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30 }}>
         <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: 17, cursor: "pointer" }}>{community.name}</button>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 999, padding: "7px 14px", maxWidth: 420 }}>
-          <Search size={16} color={t.muted} /><input placeholder="Search" style={{ background: "none", border: "none", outline: "none", color: t.text, flex: 1 }} />
+          <Search size={16} color={t.muted} /><input placeholder="Search" value={searchQ} onChange={(e) => setSearchQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && searchQ.trim()) navigate(`/search?q=${encodeURIComponent(searchQ.trim())}`); }}
+            style={{ background: "none", border: "none", outline: "none", color: t.text, flex: 1 }} />
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} /> Create Post</button>
@@ -945,6 +950,53 @@ function LandingRoute() {
   const c: any = useOutletContext();
   useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
   return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
+}
+
+// Shared list layout for tag-filter and search-result pages.
+function PostListPage({ t, title, sub, posts, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ padding: "20px 0 4px" }}>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>{title}</h1>
+        {sub && <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>{sub}</div>}
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading posts…</div>
+      ) : posts.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{emptyText}</div>
+      ) : (
+        posts.map((p: UiPost) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} />)
+      )}
+    </div>
+  );
+}
+
+function TagRoute() {
+  const c: any = useOutletContext();
+  const { slug } = useParams();
+  const [posts, setPosts] = useState<UiPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    window.scrollTo(0, 0); setLoading(true);
+    fetchTagFeed(slug as string).then(setPosts).catch((e) => console.error("tag feed failed", e)).finally(() => setLoading(false));
+  }, [slug]);
+  const label = POST_FLAIRS[slug as string]?.label ?? slug;
+  useEffect(() => { setPageMeta({ title: `${label} — ${community.name}`, description: `${label} posts on ${community.name}.`, url: `/t/${slug}`, type: "website" }); }, [slug, label]);
+  return <PostListPage t={c.t} title={label} sub={`Posts tagged ${label}`} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
+}
+
+function SearchRoute() {
+  const c: any = useOutletContext();
+  const [params] = useSearchParams();
+  const q = params.get("q") ?? "";
+  const [posts, setPosts] = useState<UiPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    window.scrollTo(0, 0); setLoading(true);
+    searchPosts(q).then(setPosts).catch((e) => console.error("search failed", e)).finally(() => setLoading(false));
+  }, [q]);
+  useEffect(() => { setPageMeta({ title: `Search — ${community.name}`, description: community.blurb, url: "/search", type: "website" }); }, []);
+  return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
 }
 
 function PostRoute() {
@@ -1017,6 +1069,8 @@ export default function AppRoutes() {
         <Route index element={<LandingRoute />} />
         <Route path="post/:id" element={<PostRoute />} />
         <Route path="user/:username" element={<MemberRoute />} />
+        <Route path="t/:slug" element={<TagRoute />} />
+        <Route path="search" element={<SearchRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
