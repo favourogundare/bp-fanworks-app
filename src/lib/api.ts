@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
-import type { UiComment, UiPost, UiPinned, UiProfile } from './types'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -395,6 +395,33 @@ export async function fetchHiddenUsernames(): Promise<string[]> {
   return (data ?? []).map((r: Row) => r.target?.username).filter(Boolean) as string[]
 }
 
+// Fields shared by the full profile-page fetch and the lightweight hover-card
+// preview fetch below.
+const PROFILE_CORE_FIELDS = 'id, username, display_name, role, created_at, member_flair:flairs(label)'
+
+function mapProfileCore(p: Row): UiUserPreview {
+  return {
+    id: p.id,
+    username: p.username,
+    display: p.display_name || p.username,
+    flair: (p.member_flair as Row | null)?.label ?? null,
+    age: accountAge(p.created_at),
+    isMod: p.role === 'mod',
+  }
+}
+
+/** Lean profile fields for a username hover card — no posts, no counts. */
+export async function fetchUserPreview(username: string): Promise<UiUserPreview | null> {
+  const { data: p, error } = await supabase
+    .from('profiles')
+    .select(PROFILE_CORE_FIELDS)
+    .eq('username', username)
+    .maybeSingle()
+  if (error) throw error
+  if (!p) return null
+  return mapProfileCore(p)
+}
+
 // ----- profile editing (RLS: own row only; column grant in migrations 0001 + 0009) -----
 
 export const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/
@@ -447,7 +474,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select('id, username, display_name, role, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, created_at, member_flair:flairs(label)')
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -472,10 +499,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
   ])
 
   return {
-    id: p.id,
-    username: p.username,
-    display: p.display_name || p.username,
-    flair: (p.member_flair as Row | null)?.label ?? null,
+    ...mapProfileCore(p),
     banner: p.banner || '',
     avatarUrl: p.avatar_url ?? null,
     ao3: p.ao3_url ?? null,
@@ -484,11 +508,9 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
-    age: accountAge(p.created_at),
     gold: p.gold_earned ?? 0,
     achievements: 'No achievements yet',
     unlocked: 0,
-    isMod: p.role === 'mod',
     posts: (postsRes.data ?? []).map(mapPost),
   }
 }
