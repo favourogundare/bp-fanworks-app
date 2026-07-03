@@ -25,6 +25,7 @@ export interface UiPost {
   image?: boolean
   media: string[] // uploaded media URLs (may be empty; demo seed uses placeholders)
   links?: string[]
+  pollOptions: string[] // poll choice labels (empty unless type === 'poll')
   pinned: boolean
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
