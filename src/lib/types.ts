@@ -54,6 +54,8 @@ export interface UiProfile extends UiUserPreview {
   ao3: string | null // AO3 profile link
   kofi: string | null // Ko-fi link
   blurMedia: boolean // personal pref: blur NSFW/spoiler media
+  spoilerFree: boolean // spoiler-free mode toggle
+  spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
   followers: number
   karma: string
   contributions: number
