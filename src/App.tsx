@@ -11,8 +11,8 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments } from "./lib/api";
-import type { FeedSort } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, fetchNotifications, fetchUnreadCount, markAllNotificationsRead } from "./lib/api";
+import type { FeedSort, UiNotification } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -1059,6 +1059,17 @@ function AppLayout() {
   const [searchQ, setSearchQ] = useState("");
   const { user, signOut } = useAuth();
 
+  const [unread, setUnread] = useState(0);
+  const refreshUnread = () => { fetchUnreadCount().then(setUnread).catch(() => {}); };
+  // Badge freshness: on load + a slow poll. Realtime subscription can replace this later.
+  useEffect(() => {
+    if (!user?.id) return;
+    refreshUnread();
+    const iv = setInterval(refreshUnread, 60_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const [feed, setFeed] = useState<UiPost[]>([]);
   const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
@@ -1106,7 +1117,7 @@ function AppLayout() {
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed };
 
   return (
     <PrefsContext.Provider value={{ blurMedia }}>
@@ -1121,6 +1132,10 @@ function AppLayout() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
+          <button onClick={() => navigate("/inbox")} title="Notifications" aria-label="Notifications" style={{ position: "relative", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
+            <Bell size={18} />
+            {unread > 0 && <span style={{ position: "absolute", top: -3, right: -3, background: "#e0726b", color: "#1a0b0b", fontSize: 10, fontWeight: 800, borderRadius: 999, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unread > 9 ? "9+" : unread}</span>}
+          </button>
           <button onClick={() => navigate("/saved")} title="Saved" aria-label="Saved items" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><Bookmark size={18} /></button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} aria-label="Messages" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
           <button onClick={toggleTheme} title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
@@ -1196,6 +1211,56 @@ function SearchRoute() {
   }, [q]);
   useEffect(() => { setPageMeta({ title: `Search — ${community.name}`, description: community.blurb, url: "/search", type: "website" }); }, []);
   return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
+}
+
+function InboxRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const [items, setItems] = useState<UiNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    fetchNotifications()
+      .then(setItems)
+      .catch((e) => console.error("inbox load failed", e))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { setPageMeta({ title: `Inbox — ${community.name}`, description: community.blurb, url: "/inbox", type: "website" }); }, []);
+  const markAll = () => {
+    markAllNotificationsRead()
+      .then(() => { setItems((prev) => prev.map((n) => ({ ...n, unread: false }))); c.refreshUnread?.(); })
+      .catch((e) => console.error("mark read failed", e));
+  };
+  const line = (n: UiNotification) =>
+    n.type === "reply" ? `replied to you on “${n.postTitle}”`
+    : n.type === "mention" ? `mentioned you on “${n.postTitle}”`
+    : `your post “${n.postTitle}” is getting votes`;
+  const hasUnread = items.some((n) => n.unread);
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 0 10px" }}>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Inbox</h1>
+        {hasUnread && <button onClick={markAll} style={relBtn(t)}>Mark all read</button>}
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : items.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Nothing yet. Replies and @mentions land here.</div>
+      ) : (
+        items.map((n) => (
+          <div key={n.id} onClick={() => { if (n.postId) c.goPost({ id: n.postId }); }}
+            style={{ display: "flex", alignItems: "center", gap: 10, background: t.panel, border: `1px solid ${n.unread ? t.accent : t.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 8, cursor: n.postId ? "pointer" : "default" }}>
+            <Avatar seed={n.actor} size={30} t={t} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ color: t.text, fontSize: 14 }}><b>{n.actor}</b> {line(n)}</span>
+              <div style={{ color: t.muted, fontSize: 12 }}>{n.when}</div>
+            </div>
+            {n.unread && <span style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent, flexShrink: 0 }} />}
+          </div>
+        ))
+      )}
+    </div>
+  );
 }
 
 function SavedRoute() {
@@ -1318,6 +1383,7 @@ export default function AppRoutes() {
         <Route path="t/:slug" element={<TagRoute />} />
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
+        <Route path="inbox" element={<InboxRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
