@@ -1236,7 +1236,7 @@ function PostRoute() {
   const [post, setPost] = useState<UiPost | null>(null);
   const load = async () => { try { setPost(await fetchPostWithComments(id as string)); } catch (e) { console.error("post load failed", e); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { window.scrollTo(0, 0); setPost(null); load(); }, [id]);
+  useEffect(() => { window.scrollTo(0, 0); setPost(null); setPageMeta({ title: community.name }); load(); }, [id]);
   useEffect(() => {
     if (!post) return;
     const cover = (post.media || []).find((m) => typeof m === "string" && m.startsWith("http"));
@@ -1253,7 +1253,7 @@ function MemberRoute() {
   const [loading, setLoading] = useState(true);
   const load = async () => { setLoading(true); try { setProfile(await fetchProfile(username as string)); } catch (e) { console.error("profile load failed", e); } finally { setLoading(false); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { window.scrollTo(0, 0); load(); }, [username]);
+  useEffect(() => { window.scrollTo(0, 0); setPageMeta({ title: community.name }); load(); }, [username]);
   useEffect(() => {
     if (!profile) return;
     setPageMeta({ title: `${profile.display} (@${profile.username}) — ${community.name}`, description: clip(profile.banner) || `${profile.display} on ${community.name}.`, url: `/user/${profile.username}`, type: "profile" });
