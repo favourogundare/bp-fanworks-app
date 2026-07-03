@@ -4,15 +4,15 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults } from "./lib/api";
-import type { FeedSort } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead } from "./lib/api";
+import type { FeedSort, UiNotification } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -92,7 +92,7 @@ function Flair({ flairKey, plain = false }: any) {
 }
 
 // Signed-in member's content prefs, provided by AppLayout (blur pref reaches MediaBlock without prop drilling).
-const PrefsContext = createContext<{ blurMedia: boolean }>({ blurMedia: true });
+const PrefsContext = createContext<{ blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[] }>({ blurMedia: true, spoilerFree: false, spoilerTags: [] });
 
 function Avatar({ seed, size = 36, t, url = null }: any) {
   if (url) return <img src={url} alt="" style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
@@ -360,6 +360,10 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const mine = !!myUsername && post.author === myUsername;
   const [saved, toggleSave] = useSaved("post", post.id);
   const hoverHandlers = useUsernameHoverCard(post.author);
+  const { spoilerFree, spoilerTags } = useContext(PrefsContext);
+  const [revealed, setRevealed] = useState(false);
+  // Spoiler-free mode: hide posts carrying any tag the member marked as a spoiler.
+  const spoilerHit = spoilerFree ? (post.flairs || []).filter((f: string) => spoilerTags.includes(f)) : [];
 
   const saveEdit = async () => {
     const tt = title.trim();
@@ -379,6 +383,13 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", color: t.muted, fontSize: 13, fontStyle: "italic" }}>
       Post hidden — you muted{" "}
       <span onClick={() => onAuthor(post.author)} {...hoverHandlers} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700 }}>{post.author}</span>. Open their profile to unmute.
+    </div>;
+  }
+  if (spoilerHit.length > 0 && !revealed) {
+    return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", display: "flex", alignItems: "center", gap: 10, color: t.muted, fontSize: 13 }}>
+      <EyeOff size={15} />
+      <span style={{ fontStyle: "italic" }}>Hidden by spoiler-free mode — tagged {spoilerHit.map((f: string) => POST_FLAIRS[f]?.label ?? f).join(", ")}.</span>
+      <button onClick={() => setRevealed(true)} style={{ ...relBtn(t), padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}>Show anyway</button>
     </div>;
   }
   return (
@@ -899,6 +910,9 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [ao3, setAo3] = useState(profile.ao3 || "");
   const [kofi, setKofi] = useState(profile.kofi || "");
   const [blur, setBlur] = useState(profile.blurMedia);
+  const [spoilerFree, setSpoilerFree] = useState(!!profile.spoilerFree);
+  const [spoilerTags, setSpoilerTags] = useState<string[]>(profile.spoilerTags || []);
+  const toggleSpoilerTag = (k: string) => setSpoilerTags((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [mutes, setMutes] = useState<{ id: string; username: string; type: string }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -926,6 +940,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if ((ao3 || null) !== profile.ao3) patch.ao3_url = ao3 || null;
       if ((kofi || null) !== profile.kofi) patch.kofi_url = kofi || null;
       if (blur !== profile.blurMedia) patch.blur_media = blur;
+      if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
+      if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
       if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile);
       if (Object.keys(patch).length) await updateMyProfile(patch);
       onSaved(patch.username); // navigates if username changed, else reloads
@@ -962,6 +978,14 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <label style={{ display: "flex", alignItems: "center", gap: 8, color: t.text, fontSize: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} /> Blur NSFW / spoiler media
       </label>
+      <label style={label}>SPOILER-FREE MODE</label>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, color: t.text, fontSize: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={spoilerFree} onChange={(e) => setSpoilerFree(e.target.checked)} /> Hide posts with my spoiler tags
+      </label>
+      <div style={{ color: t.muted, fontSize: 12, margin: "8px 0 6px" }}>Tags to hide{spoilerFree ? "" : " (mode off)"}:</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, opacity: spoilerFree ? 1 : 0.5 }}>
+        {Object.keys(POST_FLAIRS).map((k) => { const on = spoilerTags.includes(k); return <span key={k} onClick={() => toggleSpoilerTag(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>; })}
+      </div>
       <label style={label}>MUTED / BLOCKED</label>
       {mutes.length === 0 ? (
         <div style={{ color: t.muted, fontSize: 13 }}>Nobody muted or blocked.</div>
@@ -1118,6 +1142,17 @@ function AppLayout() {
   const [searchQ, setSearchQ] = useState("");
   const { user, signOut } = useAuth();
 
+  const [unread, setUnread] = useState(0);
+  const refreshUnread = () => { fetchUnreadCount().then(setUnread).catch(() => {}); };
+  // Badge freshness: on load + a slow poll. Realtime subscription can replace this later.
+  useEffect(() => {
+    if (!user?.id) return;
+    refreshUnread();
+    const iv = setInterval(refreshUnread, 60_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const [feed, setFeed] = useState<UiPost[]>([]);
   const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
@@ -1125,6 +1160,8 @@ function AppLayout() {
   const [myUsername, setMyUsername] = useState<string | null>(null);
   const [myIsMod, setMyIsMod] = useState(false);
   const [blurMedia, setBlurMedia] = useState(true);
+  const [spoilerFree, setSpoilerFree] = useState(false);
+  const [spoilerTags, setSpoilerTags] = useState<string[]>([]);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -1135,7 +1172,7 @@ function AppLayout() {
 
   // Resolve the current member's identity (username, mod flag, content prefs) for the shell.
   const refreshIdentity = () => fetchMyIdentity().then((id) => {
-    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); }
+    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); setSpoilerFree(id.spoilerFree); setSpoilerTags(id.spoilerTags); }
   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshIdentity(); }, [user?.id]);
@@ -1165,10 +1202,10 @@ function AppLayout() {
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed };
 
   return (
-    <PrefsContext.Provider value={{ blurMedia }}>
+    <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags }}>
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30, flexWrap: phone ? "wrap" : "nowrap" }}>
         <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: phone ? 15 : 17, cursor: "pointer", padding: phone ? 0 : undefined }}>{community.name}</button>
@@ -1180,6 +1217,10 @@ function AppLayout() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={() => setShowCreate(true)} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
+          <button onClick={() => navigate("/inbox")} title="Notifications" aria-label="Notifications" style={{ position: "relative", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
+            <Bell size={18} />
+            {unread > 0 && <span style={{ position: "absolute", top: -3, right: -3, background: "#e0726b", color: "#1a0b0b", fontSize: 10, fontWeight: 800, borderRadius: 999, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unread > 9 ? "9+" : unread}</span>}
+          </button>
           <button onClick={() => navigate("/saved")} title="Saved" aria-label="Saved items" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><Bookmark size={18} /></button>
           <button onClick={() => { setChatTarget(null); setShowChat(true); }} aria-label="Messages" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><MessageSquare size={18} /></button>
           <button onClick={toggleTheme} title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
@@ -1257,6 +1298,56 @@ function SearchRoute() {
   return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
 }
 
+function InboxRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const [items, setItems] = useState<UiNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    fetchNotifications()
+      .then(setItems)
+      .catch((e) => console.error("inbox load failed", e))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { setPageMeta({ title: `Inbox — ${community.name}`, description: community.blurb, url: "/inbox", type: "website" }); }, []);
+  const markAll = () => {
+    markAllNotificationsRead()
+      .then(() => { setItems((prev) => prev.map((n) => ({ ...n, unread: false }))); c.refreshUnread?.(); })
+      .catch((e) => console.error("mark read failed", e));
+  };
+  const line = (n: UiNotification) =>
+    n.type === "reply" ? `replied to you on “${n.postTitle}”`
+    : n.type === "mention" ? `mentioned you on “${n.postTitle}”`
+    : `your post “${n.postTitle}” is getting votes`;
+  const hasUnread = items.some((n) => n.unread);
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 0 10px" }}>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Inbox</h1>
+        {hasUnread && <button onClick={markAll} style={relBtn(t)}>Mark all read</button>}
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : items.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Nothing yet. Replies and @mentions land here.</div>
+      ) : (
+        items.map((n) => (
+          <div key={n.id} onClick={() => { if (n.postId) c.goPost({ id: n.postId }); }}
+            style={{ display: "flex", alignItems: "center", gap: 10, background: t.panel, border: `1px solid ${n.unread ? t.accent : t.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 8, cursor: n.postId ? "pointer" : "default" }}>
+            <Avatar seed={n.actor} size={30} t={t} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ color: t.text, fontSize: 14 }}><b>{n.actor}</b> {line(n)}</span>
+              <div style={{ color: t.muted, fontSize: 12 }}>{n.when}</div>
+            </div>
+            {n.unread && <span style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent, flexShrink: 0 }} />}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function SavedRoute() {
   const c: any = useOutletContext();
   const t = c.t;
@@ -1295,7 +1386,7 @@ function PostRoute() {
   const [post, setPost] = useState<UiPost | null>(null);
   const load = async () => { try { setPost(await fetchPostWithComments(id as string)); } catch (e) { console.error("post load failed", e); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { window.scrollTo(0, 0); setPost(null); load(); }, [id]);
+  useEffect(() => { window.scrollTo(0, 0); setPost(null); setPageMeta({ title: community.name }); load(); }, [id]);
   useEffect(() => {
     if (!post) return;
     const cover = (post.media || []).find((m) => typeof m === "string" && m.startsWith("http"));
@@ -1312,7 +1403,7 @@ function MemberRoute() {
   const [loading, setLoading] = useState(true);
   const load = async () => { setLoading(true); try { setProfile(await fetchProfile(username as string)); } catch (e) { console.error("profile load failed", e); } finally { setLoading(false); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { window.scrollTo(0, 0); load(); }, [username]);
+  useEffect(() => { window.scrollTo(0, 0); setPageMeta({ title: community.name }); load(); }, [username]);
   useEffect(() => {
     if (!profile) return;
     setPageMeta({ title: `${profile.display} (@${profile.username}) — ${community.name}`, description: clip(profile.banner) || `${profile.display} on ${community.name}.`, url: `/user/${profile.username}`, type: "profile" });
@@ -1377,6 +1468,7 @@ export default function AppRoutes() {
         <Route path="t/:slug" element={<TagRoute />} />
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
+        <Route path="inbox" element={<InboxRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
