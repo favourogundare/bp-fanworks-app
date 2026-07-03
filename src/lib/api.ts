@@ -355,6 +355,64 @@ export async function fetchSavedComments(): Promise<SavedComment[]> {
     }))
 }
 
+// ----- notifications / inbox (rows created by DB trigger; client reads + marks read) -----
+
+export interface UiNotification {
+  id: string
+  type: 'reply' | 'mention' | 'vote_milestone'
+  actor: string
+  postId: string | null
+  postTitle: string
+  when: string
+  unread: boolean
+}
+
+/** The member's notifications, newest first. */
+export async function fetchNotifications(): Promise<UiNotification[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('id, type, read_at, created_at, post_id, actor:profiles!notifications_actor_id_fkey(username), post:posts(title)')
+    .eq('recipient_id', me)
+    .order('created_at', { ascending: false })
+    .limit(50)
+  if (error) throw error
+  return (data ?? []).map((r: Row) => ({
+    id: r.id,
+    type: r.type,
+    actor: r.actor?.username ?? 'someone',
+    postId: r.post_id ?? null,
+    postTitle: r.post?.title ?? '',
+    when: timeAgo(r.created_at),
+    unread: !r.read_at,
+  }))
+}
+
+/** Count of unread notifications (for the header badge). */
+export async function fetchUnreadCount(): Promise<number> {
+  const me = await getMyProfileId()
+  if (!me) return 0
+  const { count } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient_id', me)
+    .is('read_at', null)
+  return count ?? 0
+}
+
+/** Mark every unread notification read. */
+export async function markAllNotificationsRead(): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) return
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('recipient_id', me)
+    .is('read_at', null)
+  if (error) throw error
+}
+
 /** Full-text search over community posts (title + body, websearch syntax). */
 export async function searchPosts(query: string): Promise<UiPost[]> {
   const q = query.trim()
