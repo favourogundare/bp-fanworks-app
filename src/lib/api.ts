@@ -1,6 +1,8 @@
 // Data layer: reads from Supabase and maps rows into the UI shapes in types.ts.
-// Embeds use PostgREST's relationship syntax (author:profiles(...), etc.), which
-// works because each foreign key here is unambiguous.
+// Embeds use PostgREST's relationship syntax (author:profiles(...), etc.).
+// posts<->profiles has TWO paths since poll_votes (0014), so embeds between
+// those tables must name their FK (profiles!posts_author_id_fkey) or PostgREST
+// rejects the query with PGRST201.
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
@@ -184,9 +186,12 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
   }
 }
 
+// author embed names its FK: poll_votes (0014, live in the dev DB) added a
+// second posts<->profiles path, so a bare profiles embed is ambiguous. Same fix
+// ships in the polls branch; whichever merges second resolves a one-line conflict.
 const POST_FIELDS =
   'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, ' +
-  'author:profiles(username), post_flairs(flairs(slug)), comments(count)'
+  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
   return {
@@ -293,19 +298,96 @@ export async function toggleSaved(targetType: VoteTarget, targetId: string, on: 
       .delete()
       .match({ saver_id: me, target_type: targetType, target_id: targetId })
     if (error) throw error
+    // Folders are views over saves: unsaving removes the item from all of this
+    // member's folders too (RLS already scopes the delete to folders they own).
+    await supabase.from('folder_items').delete().match({ target_type: targetType, target_id: targetId })
   }
 }
 
-/** The member's saved posts, most recently saved first. */
-export async function fetchSavedPosts(): Promise<UiPost[]> {
+// ----- bookmark folders (private, RLS-scoped to the owner) -----
+
+export interface UiFolder {
+  id: string
+  name: string
+  count: number
+}
+
+/** The member's folders with item counts, oldest first (stable chip order). */
+export async function fetchMyFolders(): Promise<UiFolder[]> {
   const me = await getMyProfileId()
   if (!me) return []
-  const { data: saves } = await supabase
-    .from('saved_items')
-    .select('target_id, created_at')
-    .eq('saver_id', me)
-    .eq('target_type', 'post')
-    .order('created_at', { ascending: false })
+  const { data, error } = await supabase
+    .from('bookmark_folders')
+    .select('id, name, created_at, folder_items(count)')
+    .eq('owner_id', me)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map((r: Row) => ({ id: r.id, name: r.name, count: r.folder_items?.[0]?.count ?? 0 }))
+}
+
+/** Create a folder; duplicate names surface as a unique-violation error. */
+export async function createFolder(name: string): Promise<UiFolder> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const clean = name.trim()
+  if (!clean || clean.length > 40) throw new Error('Folder names are 1-40 characters')
+  const { data, error } = await supabase
+    .from('bookmark_folders')
+    .insert({ owner_id: me, name: clean })
+    .select('id, name')
+    .single()
+  if (error) throw error
+  return { id: data.id, name: data.name, count: 0 }
+}
+
+/** Delete a folder (its item rows cascade; the saves themselves stay). */
+export async function deleteFolder(folderId: string): Promise<void> {
+  const { error } = await supabase.from('bookmark_folders').delete().eq('id', folderId)
+  if (error) throw error
+}
+
+/** Folder ids this saved item currently sits in (for the per-item picker). */
+export async function fetchFolderMembership(targetType: VoteTarget, targetId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('folder_items')
+    .select('folder_id')
+    .match({ target_type: targetType, target_id: targetId })
+  return (data ?? []).map((r: Row) => r.folder_id)
+}
+
+/** Put a saved item into (on=true) or take it out of a folder. */
+export async function toggleFolderItem(folderId: string, targetType: VoteTarget, targetId: string, on: boolean): Promise<void> {
+  if (on) {
+    const { error } = await supabase
+      .from('folder_items')
+      .upsert({ folder_id: folderId, target_type: targetType, target_id: targetId }, { onConflict: 'folder_id,target_type,target_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('folder_items')
+      .delete()
+      .match({ folder_id: folderId, target_type: targetType, target_id: targetId })
+    if (error) throw error
+  }
+}
+
+/** The member's saved posts, most recently saved first (optionally one folder). */
+export async function fetchSavedPosts(folderId?: string): Promise<UiPost[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data: saves } = folderId
+    ? await supabase
+        .from('folder_items')
+        .select('target_id, created_at')
+        .eq('folder_id', folderId)
+        .eq('target_type', 'post')
+        .order('created_at', { ascending: false })
+    : await supabase
+        .from('saved_items')
+        .select('target_id, created_at')
+        .eq('saver_id', me)
+        .eq('target_type', 'post')
+        .order('created_at', { ascending: false })
   const ids = (saves ?? []).map((s: Row) => s.target_id)
   if (!ids.length) return []
   const { data, error } = await supabase.from('posts').select(POST_FIELDS).in('id', ids)
@@ -326,15 +408,22 @@ export interface SavedComment {
 }
 
 /** The member's saved comments as snippets linking back to their posts. */
-export async function fetchSavedComments(): Promise<SavedComment[]> {
+export async function fetchSavedComments(folderId?: string): Promise<SavedComment[]> {
   const me = await getMyProfileId()
   if (!me) return []
-  const { data: saves } = await supabase
-    .from('saved_items')
-    .select('target_id, created_at')
-    .eq('saver_id', me)
-    .eq('target_type', 'comment')
-    .order('created_at', { ascending: false })
+  const { data: saves } = folderId
+    ? await supabase
+        .from('folder_items')
+        .select('target_id, created_at')
+        .eq('folder_id', folderId)
+        .eq('target_type', 'comment')
+        .order('created_at', { ascending: false })
+    : await supabase
+        .from('saved_items')
+        .select('target_id, created_at')
+        .eq('saver_id', me)
+        .eq('target_type', 'comment')
+        .order('created_at', { ascending: false })
   const ids = (saves ?? []).map((s: Row) => s.target_id)
   if (!ids.length) return []
   const { data, error } = await supabase
