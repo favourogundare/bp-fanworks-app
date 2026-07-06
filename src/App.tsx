@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -516,19 +516,23 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
   const [body, setBody] = useState("");
   const [flairs, setFlairs] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [pollOpts, setPollOpts] = useState(["", "", "", ""]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const toggleFlair = (k: string) => setFlairs((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
   const isMedia = sel === "image" || sel === "video";
+  const setPollOpt = (i: number, v: string) => setPollOpts((p) => p.map((x, j) => (j === i ? v : x)));
 
   const submit = async () => {
     if (!title.trim()) { setError("Give your post a title."); return; }
+    const cleanPoll = pollOpts.map((o) => o.trim()).filter(Boolean);
+    if (sel === "poll" && cleanPoll.length < 2) { setError("A poll needs at least 2 answer choices."); return; }
     setBusy(true); setError(null);
     try {
       let media: string[] = [];
       if (files.length) media = await uploadMedia(files);
-      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media });
+      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined });
       onCreated?.();
       onClose();
     } catch (e: any) {
@@ -568,6 +572,15 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
               onChange={(e) => setFiles(Array.from(e.target.files || []).slice(0, 20))}
               style={{ color: t.text, fontSize: 13 }} />
             {files.length > 0 && <div style={{ color: t.muted, fontSize: 12, marginTop: 4 }}>{files.length} file{files.length > 1 ? "s" : ""} selected</div>}
+          </div>
+        )}
+        {sel === "poll" && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Answer choices (2–4)</div>
+            {pollOpts.map((o, i) => (
+              <input key={i} value={o} onChange={(e) => setPollOpt(i, e.target.value)} placeholder={`Option ${i + 1}${i < 2 ? "" : " (optional)"}`}
+                style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "8px 12px", color: t.text, marginBottom: 6, boxSizing: "border-box" }} />
+            ))}
           </div>
         )}
         <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={4} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical" }} />
@@ -760,6 +773,51 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
   );
 }
 
+// Poll results + voting. One vote per member; clicking another option changes it.
+function PollBlock({ post, t }: any) {
+  const options: string[] = post.pollOptions || [];
+  const [counts, setCounts] = useState<number[]>(() => new Array(options.length).fill(0));
+  const [total, setTotal] = useState(0);
+  const [myVote, setMyVote] = useState<number | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = () => fetchPollResults(post.id, options.length)
+    .then((r) => { setCounts(r.counts); setTotal(r.total); setMyVote(r.myVote); setLoaded(true); })
+    .catch((e) => { console.error("poll load failed", e); setLoaded(true); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [post.id]);
+
+  const vote = (i: number) => {
+    if (myVote === i) return;
+    const prev = myVote;
+    setMyVote(i); // optimistic: move the count
+    setCounts((c) => { const n = [...c]; if (prev !== null && prev < n.length) n[prev]--; n[i]++; return n; });
+    setTotal((tot) => (prev === null ? tot + 1 : tot));
+    castPollVote(post.id, i).then(load).catch((e) => { console.error("poll vote failed", e); load(); });
+  };
+
+  if (options.length === 0) return null;
+  return (
+    <div style={{ margin: "12px 0", display: "flex", flexDirection: "column", gap: 8 }}>
+      {options.map((opt, i) => {
+        const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
+        const mine = myVote === i;
+        return (
+          <button key={i} onClick={() => vote(i)} disabled={!loaded}
+            style={{ position: "relative", overflow: "hidden", textAlign: "left", background: t.panel2, border: `1px solid ${mine ? t.accent : t.border}`, borderRadius: 10, padding: "10px 14px", cursor: "pointer", color: t.text }}>
+            <div style={{ position: "absolute", inset: 0, width: `${pct}%`, background: mine ? t.accent : t.border, opacity: mine ? 0.35 : 0.25, transition: "width .3s" }} />
+            <div style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, fontWeight: mine ? 800 : 600 }}>
+              <span>{mine ? "● " : ""}{opt}</span>
+              <span style={{ color: t.muted, fontSize: 13 }}>{pct}% · {counts[i]}</span>
+            </div>
+          </button>
+        );
+      })}
+      <div style={{ color: t.muted, fontSize: 12 }}>{total} vote{total === 1 ? "" : "s"}{myVote !== null ? " · tap another option to change your vote" : " · tap an option to vote"}</div>
+    </div>
+  );
+}
+
 function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
   const bp = useBreakpoint();
   const [saved, toggleSave] = useSaved("post", post.id);
@@ -823,6 +881,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
+        {post.type === "poll" && <PollBlock post={post} t={t} />}
         {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
         <MediaBlock post={post} t={t} />
         </>

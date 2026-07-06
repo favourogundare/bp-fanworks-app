@@ -54,6 +54,7 @@ export async function createPost(input: {
   body: string
   flairSlugs: string[]
   media?: string[]
+  pollOptions?: string[]
   surface?: 'community' | 'profile'
 }): Promise<string> {
   const me = await getMyProfileId()
@@ -67,6 +68,7 @@ export async function createPost(input: {
       title: input.title,
       body: input.body,
       media: input.media ?? [],
+      poll_options: input.pollOptions ?? [],
     })
     .select('id')
     .single()
@@ -186,11 +188,10 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
   }
 }
 
-// author embed names its FK: poll_votes (0014, live in the dev DB) added a
-// second posts<->profiles path, so a bare profiles embed is ambiguous. Same fix
-// ships in the polls branch; whichever merges second resolves a one-line conflict.
+// author embed names its FK: poll_votes added a second posts<->profiles path
+// (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, ' +
+  'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, poll_options, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -209,10 +210,45 @@ function mapPost(row: Row): UiPost {
     image: Array.isArray(row.media) && row.media.length > 0,
     media: Array.isArray(row.media) ? (row.media as string[]) : [],
     links: Array.isArray(row.links) ? (row.links as string[]) : [],
+    pollOptions: Array.isArray(row.poll_options) ? (row.poll_options as string[]) : [],
     pinned: !!row.pinned,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
   }
+}
+
+// ----- polls -----
+export interface PollResults {
+  counts: number[] // votes per option index
+  total: number
+  myVote: number | null // option index this member picked, or null
+}
+
+/** Live poll results for a post plus the signed-in member's current pick. */
+export async function fetchPollResults(postId: string, optionCount: number): Promise<PollResults> {
+  const me = await getMyProfileId()
+  const { data, error } = await supabase
+    .from('poll_votes')
+    .select('voter_id, option_idx')
+    .eq('post_id', postId)
+  if (error) throw error
+  const counts = new Array(optionCount).fill(0)
+  let myVote: number | null = null
+  for (const v of data ?? []) {
+    if (v.option_idx >= 0 && v.option_idx < optionCount) counts[v.option_idx]++
+    if (me && v.voter_id === me) myVote = v.option_idx
+  }
+  return { counts, total: (data ?? []).length, myVote }
+}
+
+/** Cast or change this member's vote on a poll (one vote per poll). */
+export async function castPollVote(postId: string, optionIdx: number): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('poll_votes')
+    .upsert({ post_id: postId, voter_id: me, option_idx: optionIdx }, { onConflict: 'post_id,voter_id' })
+  if (error) throw error
 }
 
 /** Live community stats for the sidebar: total members and contribution posts. */
