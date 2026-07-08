@@ -14,6 +14,9 @@ import { supabase, isSupabaseConfigured } from "./lib/supabase";
 import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
+import { timeAgo } from "./lib/time";
+import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
@@ -742,6 +745,35 @@ function contentGrid(bp: "phone" | "tablet" | "desktop"): React.CSSProperties {
   return { display: "grid", gridTemplateColumns: cols, gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" };
 }
 
+// "Continue Reading" shelf: recently viewed posts from local reading history.
+// Renders nothing when tracking is off or history is empty.
+function ContinueReading({ t, bp }: any) {
+  const navigate = useNavigate();
+  const [entries, setEntries] = useState<HistoryEntry[]>(() => getHistory());
+  const [off, setOff] = useState(() => isTrackingOff());
+  if (off || entries.length === 0) return null;
+  const smallBtn = { background: "none", border: "none", color: t.muted, fontSize: 12, cursor: "pointer", padding: 0 } as const;
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.heading, fontSize: 14, fontWeight: 700, padding: "8px 0" }}>
+        <BookOpen size={15} /> Continue Reading
+        <span style={{ flex: 1 }} />
+        <button style={smallBtn} onClick={() => { clearHistory(); setEntries([]); }}>Clear</button>
+        <span style={{ color: t.muted, fontSize: 12 }}>·</span>
+        <button style={smallBtn} onClick={() => { setTrackingOff(true); setOff(true); }} title="Stop tracking viewed posts on this device">Turn off</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: bp === "phone" ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 8 }}>
+        {entries.slice(0, 6).map((h) => (
+          <div key={h.id} onClick={() => navigate(`/post/${h.id}`)} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 14, cursor: "pointer" }}>
+            <div style={{ color: t.text, fontWeight: 700, fontSize: 13, marginBottom: 10, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{h.title}</div>
+            <div style={{ color: t.muted, fontSize: 12 }}>{h.author} · viewed {timeAgo(h.at)} ago</div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged }: any) {
   const bp = useBreakpoint();
   return (
@@ -765,6 +797,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
             </div>
           </>
         )}
+        <ContinueReading t={t} bp={bp} />
         <div style={{ display: "flex", gap: 8, padding: "8px 0", flexWrap: "wrap" }}>
           {(["new", "hot", "top"] as const).map((k) => (
             <button key={k} onClick={() => onSort(k)} style={relBtn(t, !following && sort === k)}>
@@ -1556,6 +1589,7 @@ function PostRoute() {
     if (!post) return;
     const cover = (post.media || []).find((m) => typeof m === "string" && m.startsWith("http"));
     setPageMeta({ title: `${post.title} — ${community.name}`, description: clip(post.body) || community.blurb, image: cover, url: `/post/${post.id}`, type: "article" });
+    recordView({ id: post.id, title: post.title, author: post.author });
   }, [post]);
   if (!post) return <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 16px", color: c.t.muted, fontSize: 14 }}>Loading…</div>;
   return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} myUsername={c.myUsername} />;
