@@ -11,8 +11,8 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed } from "./lib/api";
-import type { FeedSort, UiNotification } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
+import type { FeedSort, UiNotification, UiFolder } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -1373,35 +1373,136 @@ function InboxRoute() {
   );
 }
 
+// Per-item folder assignment: collapsed button, expands to folder checkboxes.
+// Membership loads on first expand; toggles are optimistic.
+function FolderTagger({ t, targetType, targetId, folders, onChanged }: any) {
+  const [open, setOpen] = useState(false);
+  const [inFolders, setInFolders] = useState<string[] | null>(null);
+  const expand = () => {
+    setOpen(!open);
+    if (inFolders === null) fetchFolderMembership(targetType, targetId).then(setInFolders).catch((e) => console.error("membership load failed", e));
+  };
+  const toggle = (fid: string) => {
+    const on = !(inFolders ?? []).includes(fid);
+    setInFolders((prev) => (on ? [...(prev ?? []), fid] : (prev ?? []).filter((x) => x !== fid))); // optimistic
+    toggleFolderItem(fid, targetType, targetId, on)
+      .then(() => onChanged?.())
+      .catch((e) => { console.error("folder toggle failed", e); setInFolders((prev) => (on ? (prev ?? []).filter((x) => x !== fid) : [...(prev ?? []), fid])); });
+  };
+  if (folders.length === 0) return null;
+  return (
+    <div style={{ margin: "4px 0 0" }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={expand} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+        <Bookmark size={12} /> Folders {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+          {folders.map((f: any) => {
+            const on = (inFolders ?? []).includes(f.id);
+            return (
+              <button key={f.id} onClick={() => toggle(f.id)} disabled={inFolders === null}
+                style={{ ...relBtn(t, on), padding: "3px 10px", fontSize: 12, opacity: inFolders === null ? 0.5 : 1 }}>
+                {f.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SavedRoute() {
   const c: any = useOutletContext();
   const t = c.t;
+  const [folders, setFolders] = useState<UiFolder[]>([]);
+  const [active, setActive] = useState<string | null>(null); // folder id, null = all saved
   const [posts, setPosts] = useState<UiPost[]>([]);
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    window.scrollTo(0, 0);
-    Promise.all([fetchSavedPosts(), fetchSavedComments()])
+  const [newName, setNewName] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [err, setErr] = useState("");
+
+  const refreshFolders = () => fetchMyFolders().then(setFolders).catch((e) => console.error("folders load failed", e));
+  const loadItems = (folderId: string | null) => {
+    setLoading(true);
+    Promise.all([fetchSavedPosts(folderId ?? undefined), fetchSavedComments(folderId ?? undefined)])
       .then(([p, cm]) => { setPosts(p); setComments(cm); })
       .catch((e) => console.error("saved load failed", e))
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(() => { window.scrollTo(0, 0); refreshFolders(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadItems(active); }, [active]);
   useEffect(() => { setPageMeta({ title: `Saved — ${community.name}`, description: community.blurb, url: "/saved", type: "website" }); }, []);
+
+  const addFolder = () => {
+    setErr("");
+    createFolder(newName)
+      .then((f) => { setFolders((prev) => [...prev, f]); setNewName(""); })
+      .catch((e) => setErr(/duplicate|unique/i.test(e?.message || "") ? "You already have a folder with that name." : e?.message || "Couldn't create folder."));
+  };
+  const removeActiveFolder = () => {
+    if (!active) return;
+    deleteFolder(active)
+      .then(() => { setFolders((prev) => prev.filter((f) => f.id !== active)); setActive(null); setConfirmingDelete(false); })
+      .catch((e) => { console.error("folder delete failed", e); setConfirmingDelete(false); });
+  };
+  const activeName = folders.find((f) => f.id === active)?.name;
+
   return (
-    <>
-      <PostListPage t={t} title="Saved" sub="Your bookmarked posts and comments — only you can see this." posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="No saved posts yet. Hit Save on any post." />
-      {!loading && comments.length > 0 && (
-        <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
-          <div style={{ color: t.heading, fontSize: 15, fontWeight: 800, padding: "18px 0 6px" }}>Saved comments</div>
-          {comments.map((cm) => (
-            <div key={cm.id} onClick={() => c.goPost({ id: cm.postId })} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 12, marginBottom: 10, cursor: "pointer" }}>
-              <div style={{ color: t.muted, fontSize: 12, marginBottom: 4 }}>{cm.author} · {cm.when} · on <span style={{ color: t.link }}>{cm.postTitle}</span></div>
-              <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{cm.body}</div>
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+      <div style={{ padding: "20px 0 4px" }}>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Saved</h1>
+        <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>Your bookmarked posts and comments — only you can see this.</div>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "10px 0" }}>
+        <button onClick={() => setActive(null)} style={relBtn(t, active === null)}>All saved</button>
+        {folders.map((f) => (
+          <button key={f.id} onClick={() => setActive(f.id)} style={relBtn(t, active === f.id)}>{f.name} · {f.count}</button>
+        ))}
+        <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) addFolder(); }}
+          placeholder="New folder…" style={{ background: t.bg, border: `1px solid ${t.border}`, borderRadius: 999, padding: "7px 14px", color: t.text, fontSize: 13, outline: "none", width: 130 }} />
+        {newName.trim() && <button onClick={addFolder} style={{ ...relBtn(t), padding: "6px 12px" }}><Plus size={14} /></button>}
+        {active && <button onClick={() => setConfirmingDelete(true)} style={{ ...relBtn(t), padding: "6px 12px", color: "#e0726b", marginLeft: "auto" }}>Delete folder</button>}
+      </div>
+      {err && <div style={{ color: "#e0726b", fontSize: 13, marginBottom: 8 }}>{err}</div>}
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : posts.length === 0 && comments.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>
+          {active ? `Nothing in “${activeName}” yet — expand Folders on any saved item to add it.` : "No saved posts yet. Hit Save on any post."}
+        </div>
+      ) : (
+        <>
+          {posts.map((p) => (
+            <div key={p.id}>
+              <PostCard post={p} t={t} onOpen={c.goPost} onAuthor={c.goUser} muted={c.mutedUsers.includes(p.author)} showMeta myUsername={c.myUsername} />
+              <FolderTagger t={t} targetType="post" targetId={p.id} folders={folders} onChanged={() => { refreshFolders(); if (active) loadItems(active); }} />
             </div>
           ))}
-        </div>
+          {comments.length > 0 && (
+            <>
+              <div style={{ color: t.heading, fontSize: 15, fontWeight: 800, padding: "18px 0 6px" }}>Saved comments</div>
+              {comments.map((cm) => (
+                <div key={cm.id} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                  <div onClick={() => c.goPost({ id: cm.postId })} style={{ cursor: "pointer" }}>
+                    <div style={{ color: t.muted, fontSize: 12, marginBottom: 4 }}>{cm.author} · {cm.when} · on <span style={{ color: t.link }}>{cm.postTitle}</span></div>
+                    <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>{cm.body}</div>
+                  </div>
+                  <FolderTagger t={t} targetType="comment" targetId={cm.id} folders={folders} onChanged={() => { refreshFolders(); if (active) loadItems(active); }} />
+                </div>
+              ))}
+            </>
+          )}
+        </>
       )}
-    </>
+      {confirmingDelete && (
+        <ConfirmDialog t={t} title={`Delete “${activeName}”?`} message="The folder goes away; the saved items in it stay saved." confirmLabel="Delete"
+          onConfirm={removeActiveFolder} onClose={() => setConfirmingDelete(false)} busy={false} />
+      )}
+    </div>
   );
 }
 
