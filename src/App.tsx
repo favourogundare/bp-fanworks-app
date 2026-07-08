@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useContext, createContext } from "react";
 import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
-  Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
+  Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark,
@@ -210,6 +210,23 @@ const MEMBER_FLAIRS = [
 const isVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
 
 // ----- Media (real uploads + NSFW suppression) -----
+// Content warnings: body/media hide behind this box until clicked; the title
+// and flairs stay visible so readers can decide (MILESTONES §3).
+function ContentWarningGate({ warnings, t, children }: any) {
+  const [open, setOpen] = useState(false);
+  if (!warnings?.length || open) return children;
+  return (
+    <div onClick={(e) => e.stopPropagation()} style={{ border: `1px solid ${t.border}`, background: t.panel2, borderRadius: 12, padding: "14px 16px", margin: "4px 0 10px", display: "flex", alignItems: "center", gap: 12 }}>
+      <TriangleAlert size={20} color={t.accent} />
+      <div style={{ flex: 1 }}>
+        <div style={{ color: t.text, fontSize: 13, fontWeight: 800 }}>Content warning</div>
+        <div style={{ color: t.muted, fontSize: 13 }}>{warnings.join(", ")}</div>
+      </div>
+      <button onClick={() => setOpen(true)} style={{ ...relBtn(t), padding: "5px 14px", fontSize: 12 }}>Show post</button>
+    </div>
+  );
+}
+
 function MediaBlock({ post, t }: any) {
   const [revealed, setRevealed] = useState(false);
   const { blurMedia } = useContext(PrefsContext);
@@ -448,9 +465,11 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
       <div style={{ cursor: "pointer" }} onClick={() => onOpen(post)}>
         <h3 style={{ fontSize: 19, fontWeight: 700, color: t.text, margin: "0 0 8px" }}>{post.title}</h3>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
-        <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
-        {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-        <MediaBlock post={post} t={t} />
+        <ContentWarningGate warnings={post.warnings} t={t}>
+          <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
+          {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
+          <MediaBlock post={post} t={t} />
+        </ContentWarningGate>
       </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
@@ -535,6 +554,9 @@ function CommunitySidebar({ t }) {
   );
 }
 
+// Common fandom content warnings offered as one-tap chips in the composer.
+const CONTENT_WARNING_PRESETS = ["Violence", "Character death", "Grief / loss", "Self-harm", "Abuse", "Blood / gore"];
+
 // ----- Create-post modal -----
 const POST_TYPES = [
   { key: "text", icon: FileText, label: "Text Post", desc: "Stories, questions, long-form — rich text." },
@@ -556,10 +578,19 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
   const [flairs, setFlairs] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [pollOpts, setPollOpts] = useState(["", "", "", ""]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [customWarning, setCustomWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const toggleFlair = (k: string) => setFlairs((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
+  const toggleWarning = (w: string) => setWarnings((prev) => prev.includes(w) ? prev.filter((x) => x !== w) : [...prev, w]);
+  const addCustomWarning = () => {
+    const w = customWarning.trim();
+    if (!w || w.length > 40) return;
+    if (!warnings.includes(w)) setWarnings((prev) => [...prev, w]);
+    setCustomWarning("");
+  };
   const isMedia = sel === "image" || sel === "video";
   const setPollOpt = (i: number, v: string) => setPollOpts((p) => p.map((x, j) => (j === i ? v : x)));
 
@@ -571,7 +602,7 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
     try {
       let media: string[] = [];
       if (files.length) media = await uploadMedia(files);
-      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined });
+      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined, contentWarnings: warnings });
       onCreated?.();
       onClose();
     } catch (e: any) {
@@ -604,6 +635,16 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
             const on = flairs.includes(k);
             return <span key={k} onClick={() => toggleFlair(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>;
           })}
+        </div>
+        <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Content warnings (optional — readers click through to see the post)</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+          {CONTENT_WARNING_PRESETS.concat(warnings.filter((w) => !CONTENT_WARNING_PRESETS.includes(w))).map((w) => {
+            const on = warnings.includes(w);
+            return <button key={w} onClick={() => toggleWarning(w)} style={{ ...relBtn(t, on), padding: "3px 10px", fontSize: 12 }}>{w}</button>;
+          })}
+          <input value={customWarning} onChange={(e) => setCustomWarning(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomWarning(); } }}
+            placeholder="Custom…" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "3px 10px", fontSize: 12, outline: "none", width: 90 }} />
         </div>
         {isMedia && (
           <div style={{ marginBottom: 12 }}>
@@ -920,10 +961,12 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <>
         <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
-        {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
-        {post.type === "poll" && <PollBlock post={post} t={t} />}
-        {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-        <MediaBlock post={post} t={t} />
+        <ContentWarningGate warnings={post.warnings} t={t}>
+          {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
+          {post.type === "poll" && <PollBlock post={post} t={t} />}
+          {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
+          <MediaBlock post={post} t={t} />
+        </ContentWarningGate>
         </>
         )}
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0" }}>
