@@ -58,6 +58,7 @@ export interface UiProfile extends UiUserPreview {
   spoilerFree: boolean // spoiler-free mode toggle
   spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
   mutedTags: string[] // flair slugs muted everywhere (independent of spoiler mode)
+  usernameChangedAt: string | null // last username change; 30-day cooldown anchor
   followers: number
   karma: string
   contributions: number

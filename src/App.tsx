@@ -1013,6 +1013,13 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       </div>
       <label style={label}>USERNAME</label>
       <input style={field} value={username} onChange={(e) => setUsername(e.target.value)} />
+      {(() => {
+        // 30-day cooldown hint; the change_username RPC enforces the rule server-side.
+        if (!profile.usernameChangedAt) return null;
+        const until = new Date(new Date(profile.usernameChangedAt).getTime() + 30 * 86400_000);
+        if (until <= new Date()) return null;
+        return <div style={{ color: t.muted, fontSize: 12, marginTop: 4 }}>Username changed recently — changeable again on {until.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}.</div>;
+      })()}
       <label style={label}>DISPLAY NAME</label>
       <input style={field} value={display} onChange={(e) => setDisplay(e.target.value)} />
       <label style={label}>BIO</label>

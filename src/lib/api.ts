@@ -804,8 +804,17 @@ export async function updateMyProfile(fields: {
   // javascript:/data: URLs at the trust boundary.
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
-  const { error } = await supabase.from('profiles').update(fields).eq('id', me)
-  if (error) throw error
+  // Username changes go through the change_username RPC: the direct column
+  // grant was revoked in 0021 so the 30-day cooldown is enforced in the DB.
+  const { username, ...rest } = fields
+  if (username !== undefined) {
+    const { error } = await supabase.rpc('change_username', { p_username: username })
+    if (error) throw error
+  }
+  if (Object.keys(rest).length) {
+    const { error } = await supabase.from('profiles').update(rest).eq('id', me)
+    if (error) throw error
+  }
 }
 
 /** Upload an avatar image; returns its public URL (avatars/ prefix in post-media bucket). */
@@ -834,7 +843,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, username_changed_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -868,6 +877,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
     mutedTags: p.muted_tags ?? [],
+    usernameChangedAt: p.username_changed_at ?? null,
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
