@@ -373,14 +373,21 @@ export async function toggleSaved(targetType: VoteTarget, targetId: string, on: 
       .upsert({ saver_id: me, target_type: targetType, target_id: targetId }, { onConflict: 'saver_id,target_type,target_id' })
     if (error) throw error
   } else {
+    // Folders are views over saves: unsaving must also drop the item from all of
+    // this member's folders (RLS scopes the delete to folders they own). Do this
+    // FIRST and check the result — if it fails we bail before removing the save,
+    // so we never leave a folder pointing at an unsaved item (which would inflate
+    // folder counts and surface phantom rows in the folder view).
+    const { error: folderErr } = await supabase
+      .from('folder_items')
+      .delete()
+      .match({ target_type: targetType, target_id: targetId })
+    if (folderErr) throw folderErr
     const { error } = await supabase
       .from('saved_items')
       .delete()
       .match({ saver_id: me, target_type: targetType, target_id: targetId })
     if (error) throw error
-    // Folders are views over saves: unsaving removes the item from all of this
-    // member's folders too (RLS already scopes the delete to folders they own).
-    await supabase.from('folder_items').delete().match({ target_type: targetType, target_id: targetId })
   }
 }
 
