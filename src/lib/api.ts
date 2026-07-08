@@ -34,17 +34,17 @@ export function resetProfileCache() {
 }
 
 /** The signed-in member's identity for the app shell: profile id, username, mod flag, content prefs. */
-export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean; blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[] } | null> {
+export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean; blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[]; mutedTags: string[] } | null> {
   const { data: auth } = await supabase.auth.getUser()
   if (!auth.user) return null
   const { data } = await supabase
     .from('profiles')
-    .select('id, username, role, blur_media, spoiler_free, spoiler_tags')
+    .select('id, username, role, blur_media, spoiler_free, spoiler_tags, muted_tags')
     .eq('user_id', auth.user.id)
     .maybeSingle()
   if (!data) return null
   cachedProfileId = data.id
-  return { profileId: data.id, username: data.username, isMod: data.role === 'mod', blurMedia: data.blur_media ?? true, spoilerFree: data.spoiler_free ?? false, spoilerTags: data.spoiler_tags ?? [] }
+  return { profileId: data.id, username: data.username, isMod: data.role === 'mod', blurMedia: data.blur_media ?? true, spoilerFree: data.spoiler_free ?? false, spoilerTags: data.spoiler_tags ?? [], mutedTags: data.muted_tags ?? [] }
 }
 
 // ----- creating posts, comments, and uploading media -----
@@ -794,6 +794,7 @@ export async function updateMyProfile(fields: {
   blur_media?: boolean
   spoiler_free?: boolean
   spoiler_tags?: string[]
+  muted_tags?: string[]
 }): Promise<void> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -833,7 +834,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -866,6 +867,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
+    mutedTags: p.muted_tags ?? [],
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
