@@ -101,7 +101,7 @@ function Flair({ flairKey, plain = false }: any) {
 const PrefsContext = createContext<{ blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[] }>({ blurMedia: true, spoilerFree: false, spoilerTags: [] });
 
 function Avatar({ seed, size = 36, t, url = null }: any) {
-  if (url) return <img src={url} alt="" style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
+  if (url) return <img src={url} alt={`${seed}'s avatar`} style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
   let h = 0; for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return <div style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0,
     background: `linear-gradient(135deg, hsl(${h},45%,42%), hsl(${(h + 50) % 360},45%,30%))`, border: `1px solid ${t.border}` }} />;
@@ -211,6 +211,8 @@ const isVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
 
 // ----- Media (real uploads + NSFW suppression) -----
 function MediaBlock({ post, t }: any) {
+  // Descriptive alt for search/social indexing: "Art by goldjaguar_art: ..."
+  const mediaKind = POST_FLAIRS[(post.flairs || [])[0]]?.label ?? "Post media";
   const [revealed, setRevealed] = useState(false);
   const { blurMedia } = useContext(PrefsContext);
   const nsfw = post.flairs?.includes("nsfw") && blurMedia; // pref off = never blur
@@ -231,8 +233,8 @@ function MediaBlock({ post, t }: any) {
   return (
     <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
       {urls.map((u: string, i: number) => isVideo(u)
-        ? <video key={i} src={u} controls muted style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
-        : <img key={i} src={u} alt="" style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
+        ? <video key={i} src={u} controls muted aria-label={`${mediaKind} video by ${post.author}: ${post.title}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
+        : <img key={i} src={u} alt={`${mediaKind} by ${post.author}: ${post.title}${urls.length > 1 ? ` (${i + 1} of ${urls.length})` : ""}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
     </div>
   );
 }
