@@ -26,6 +26,7 @@ export interface UiPost {
   media: string[] // uploaded media URLs (may be empty; demo seed uses placeholders)
   links?: string[]
   pollOptions: string[] // poll choice labels (empty unless type === 'poll')
+  warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
   profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
   commentCount: number
@@ -58,6 +59,7 @@ export interface UiProfile extends UiUserPreview {
   blurMedia: boolean // personal pref: blur NSFW/spoiler media
   spoilerFree: boolean // spoiler-free mode toggle
   spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
+  mutedTags: string[] // flair slugs muted everywhere (independent of spoiler mode)
   followers: number
   karma: string
   contributions: number

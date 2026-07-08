@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useContext, createContext } from "react";
+import React, { useState, useEffect, useMemo, useRef, useContext, createContext } from "react";
 import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
-  Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
+  Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark,
@@ -11,9 +11,12 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
-import type { FeedSort, UiNotification, UiFolder } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
+import { timeAgo } from "./lib/time";
+import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
@@ -98,10 +101,10 @@ function Flair({ flairKey, plain = false }: any) {
 }
 
 // Signed-in member's content prefs, provided by AppLayout (blur pref reaches MediaBlock without prop drilling).
-const PrefsContext = createContext<{ blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[] }>({ blurMedia: true, spoilerFree: false, spoilerTags: [] });
+const PrefsContext = createContext<{ blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[]; mutedTags: string[] }>({ blurMedia: true, spoilerFree: false, spoilerTags: [], mutedTags: [] });
 
 function Avatar({ seed, size = 36, t, url = null }: any) {
-  if (url) return <img src={url} alt="" style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
+  if (url) return <img src={url} alt={`${seed}'s avatar`} style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
   let h = 0; for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return <div style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0,
     background: `linear-gradient(135deg, hsl(${h},45%,42%), hsl(${(h + 50) % 360},45%,30%))`, border: `1px solid ${t.border}` }} />;
@@ -210,7 +213,26 @@ const MEMBER_FLAIRS = [
 const isVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u);
 
 // ----- Media (real uploads + NSFW suppression) -----
+// Content warnings: body/media hide behind this box until clicked; the title
+// and flairs stay visible so readers can decide (MILESTONES §3).
+function ContentWarningGate({ warnings, t, children }: any) {
+  const [open, setOpen] = useState(false);
+  if (!warnings?.length || open) return children;
+  return (
+    <div onClick={(e) => e.stopPropagation()} style={{ border: `1px solid ${t.border}`, background: t.panel2, borderRadius: 12, padding: "14px 16px", margin: "4px 0 10px", display: "flex", alignItems: "center", gap: 12 }}>
+      <TriangleAlert size={20} color={t.accent} />
+      <div style={{ flex: 1 }}>
+        <div style={{ color: t.text, fontSize: 13, fontWeight: 800 }}>Content warning</div>
+        <div style={{ color: t.muted, fontSize: 13 }}>{warnings.join(", ")}</div>
+      </div>
+      <button onClick={() => setOpen(true)} style={{ ...relBtn(t), padding: "5px 14px", fontSize: 12 }}>Show post</button>
+    </div>
+  );
+}
+
 function MediaBlock({ post, t }: any) {
+  // Descriptive alt for search/social indexing: "Art by goldjaguar_art: ..."
+  const mediaKind = POST_FLAIRS[(post.flairs || [])[0]]?.label ?? "Post media";
   const [revealed, setRevealed] = useState(false);
   const { blurMedia } = useContext(PrefsContext);
   const nsfw = post.flairs?.includes("nsfw") && blurMedia; // pref off = never blur
@@ -231,8 +253,8 @@ function MediaBlock({ post, t }: any) {
   return (
     <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
       {urls.map((u: string, i: number) => isVideo(u)
-        ? <video key={i} src={u} controls muted style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
-        : <img key={i} src={u} alt="" style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
+        ? <video key={i} src={u} controls muted aria-label={`${mediaKind} video by ${post.author}: ${post.title}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
+        : <img key={i} src={u} alt={`${mediaKind} by ${post.author}: ${post.title}${urls.length > 1 ? ` (${i + 1} of ${urls.length})` : ""}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
     </div>
   );
 }
@@ -321,8 +343,16 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
     finally { setBusy(false); setConfirming(false); }
   };
 
+  const isTarget = typeof window !== "undefined" && window.location.hash === `#comment-${c.id}`;
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyCommentLink = () => {
+    const url = `${window.location.origin}/post/${postId}#comment-${c.id}`;
+    if (navigator.clipboard) navigator.clipboard.writeText(url).catch(() => {});
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  };
   return (
-    <div style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0 }}>
+    <div id={`comment-${c.id}`} style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0, ...(isTarget ? { outline: `2px solid ${t.accent}`, outlineOffset: 4, borderRadius: 8 } : null) }}>
       <div onClick={toggleCollapsed} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }} title={collapsed ? "Expand thread" : "Collapse thread"}>
         <button style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex" }} aria-label={collapsed ? "Expand thread" : "Collapse thread"}>
           {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
@@ -358,7 +388,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
             {mine && <span onClick={() => setEditing(!editing)} style={{ cursor: "pointer" }}>Edit</span>}
             {mine && <span onClick={() => setConfirming(true)} style={{ cursor: busy ? "default" : "pointer", color: "#e0726b", opacity: busy ? 0.6 : 1 }}>Delete</span>}
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Share2 size={14} /> Share</span>
+            <span onClick={copyCommentLink} title="Copy a direct link to this comment" style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: linkCopied ? t.accent : undefined }}><Share2 size={14} /> {linkCopied ? "Link copied!" : "Share"}</span>
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
           {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
@@ -381,10 +411,12 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const mine = !!myUsername && post.author === myUsername;
   const [saved, toggleSave] = useSaved("post", post.id);
   const hoverHandlers = useUsernameHoverCard(post.author);
-  const { spoilerFree, spoilerTags } = useContext(PrefsContext);
+  const { spoilerFree, spoilerTags, mutedTags } = useContext(PrefsContext);
   const [revealed, setRevealed] = useState(false);
   // Spoiler-free mode: hide posts carrying any tag the member marked as a spoiler.
   const spoilerHit = spoilerFree ? (post.flairs || []).filter((f: string) => spoilerTags.includes(f)) : [];
+  // Muted tags hide unconditionally (no mode toggle), same show-anyway escape.
+  const muteHit = (post.flairs || []).filter((f: string) => mutedTags.includes(f));
 
   const saveEdit = async () => {
     const tt = title.trim();
@@ -410,6 +442,13 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", display: "flex", alignItems: "center", gap: 10, color: t.muted, fontSize: 13 }}>
       <EyeOff size={15} />
       <span style={{ fontStyle: "italic" }}>Hidden by spoiler-free mode — tagged {spoilerHit.map((f: string) => POST_FLAIRS[f]?.label ?? f).join(", ")}.</span>
+      <button onClick={() => setRevealed(true)} style={{ ...relBtn(t), padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}>Show anyway</button>
+    </div>;
+  }
+  if (muteHit.length > 0 && !revealed) {
+    return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", display: "flex", alignItems: "center", gap: 10, color: t.muted, fontSize: 13 }}>
+      <VolumeX size={15} />
+      <span style={{ fontStyle: "italic" }}>Hidden — you muted {muteHit.map((f: string) => POST_FLAIRS[f]?.label ?? f).join(", ")}.</span>
       <button onClick={() => setRevealed(true)} style={{ ...relBtn(t), padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}>Show anyway</button>
     </div>;
   }
@@ -454,9 +493,11 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
       <div style={{ cursor: "pointer" }} onClick={() => onOpen(post)}>
         <h3 style={{ fontSize: 19, fontWeight: 700, color: t.text, margin: "0 0 8px" }}>{post.title}</h3>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
-        <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
-        {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-        <MediaBlock post={post} t={t} />
+        <ContentWarningGate warnings={post.warnings} t={t}>
+          <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
+          {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
+          <MediaBlock post={post} t={t} />
+        </ContentWarningGate>
       </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
@@ -541,6 +582,9 @@ function CommunitySidebar({ t }) {
   );
 }
 
+// Common fandom content warnings offered as one-tap chips in the composer.
+const CONTENT_WARNING_PRESETS = ["Violence", "Character death", "Grief / loss", "Self-harm", "Abuse", "Blood / gore"];
+
 // ----- Create-post modal -----
 const POST_TYPES = [
   { key: "text", icon: FileText, label: "Text Post", desc: "Stories, questions, long-form — rich text." },
@@ -562,10 +606,19 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
   const [flairs, setFlairs] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [pollOpts, setPollOpts] = useState(["", "", "", ""]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [customWarning, setCustomWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const toggleFlair = (k: string) => setFlairs((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
+  const toggleWarning = (w: string) => setWarnings((prev) => prev.includes(w) ? prev.filter((x) => x !== w) : [...prev, w]);
+  const addCustomWarning = () => {
+    const w = customWarning.trim();
+    if (!w || w.length > 40) return;
+    if (!warnings.includes(w)) setWarnings((prev) => [...prev, w]);
+    setCustomWarning("");
+  };
   const isMedia = sel === "image" || sel === "video";
   const setPollOpt = (i: number, v: string) => setPollOpts((p) => p.map((x, j) => (j === i ? v : x)));
 
@@ -577,7 +630,7 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
     try {
       let media: string[] = [];
       if (files.length) media = await uploadMedia(files);
-      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined });
+      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined, contentWarnings: warnings });
       onCreated?.();
       onClose();
     } catch (e: any) {
@@ -610,6 +663,16 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
             const on = flairs.includes(k);
             return <span key={k} onClick={() => toggleFlair(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>;
           })}
+        </div>
+        <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Content warnings (optional — readers click through to see the post)</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+          {CONTENT_WARNING_PRESETS.concat(warnings.filter((w) => !CONTENT_WARNING_PRESETS.includes(w))).map((w) => {
+            const on = warnings.includes(w);
+            return <button key={w} onClick={() => toggleWarning(w)} style={{ ...relBtn(t, on), padding: "3px 10px", fontSize: 12 }}>{w}</button>;
+          })}
+          <input value={customWarning} onChange={(e) => setCustomWarning(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomWarning(); } }}
+            placeholder="Custom…" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "3px 10px", fontSize: 12, outline: "none", width: 90 }} />
         </div>
         {isMedia && (
           <div style={{ marginBottom: 12 }}>
@@ -748,6 +811,35 @@ function contentGrid(bp: "phone" | "tablet" | "desktop"): React.CSSProperties {
   return { display: "grid", gridTemplateColumns: cols, gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" };
 }
 
+// "Continue Reading" shelf: recently viewed posts from local reading history.
+// Renders nothing when tracking is off or history is empty.
+function ContinueReading({ t, bp }: any) {
+  const navigate = useNavigate();
+  const [entries, setEntries] = useState<HistoryEntry[]>(() => getHistory());
+  const [off, setOff] = useState(() => isTrackingOff());
+  if (off || entries.length === 0) return null;
+  const smallBtn = { background: "none", border: "none", color: t.muted, fontSize: 12, cursor: "pointer", padding: 0 } as const;
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.heading, fontSize: 14, fontWeight: 700, padding: "8px 0" }}>
+        <BookOpen size={15} /> Continue Reading
+        <span style={{ flex: 1 }} />
+        <button style={smallBtn} onClick={() => { clearHistory(); setEntries([]); }}>Clear</button>
+        <span style={{ color: t.muted, fontSize: 12 }}>·</span>
+        <button style={smallBtn} onClick={() => { setTrackingOff(true); setOff(true); }} title="Stop tracking viewed posts on this device">Turn off</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: bp === "phone" ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 8 }}>
+        {entries.slice(0, 6).map((h) => (
+          <div key={h.id} onClick={() => navigate(`/post/${h.id}`)} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 14, cursor: "pointer" }}>
+            <div style={{ color: t.text, fontWeight: 700, fontSize: 13, marginBottom: 10, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{h.title}</div>
+            <div style={{ color: t.muted, fontSize: 12 }}>{h.author} · viewed {timeAgo(h.at)} ago</div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged }: any) {
   const bp = useBreakpoint();
   return (
@@ -771,6 +863,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
             </div>
           </>
         )}
+        <ContinueReading t={t} bp={bp} />
         <div style={{ display: "flex", gap: 8, padding: "8px 0", flexWrap: "wrap" }}>
           {(["new", "hot", "top"] as const).map((k) => (
             <button key={k} onClick={() => onSort(k)} style={relBtn(t, !following && sort === k)}>
@@ -864,6 +957,50 @@ function PollBlock({ post, t }: any) {
   );
 }
 
+const COMMENT_BATCH = 25;
+
+// Top-level comments render in batches with a "load more" button. A
+// #comment-<id> permalink expands collapsed ancestors, force-includes its
+// batch, and scrolls the target into view.
+function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor }: any) {
+  const targetId = window.location.hash.startsWith("#comment-") ? window.location.hash.slice("#comment-".length) : null;
+  // Path from a top-level comment to the target (indices of ancestors), or null.
+  const findPath = (c: any, id: string): any[] | null => {
+    if (c.id === id) return [c];
+    for (const r of c.replies ?? []) { const p = findPath(r, id); if (p) return [c, ...p]; }
+    return null;
+  };
+  const targetTopIdx = useMemo(() => {
+    if (!targetId) return -1;
+    for (let i = 0; i < comments.length; i++) {
+      const path = findPath(comments[i], targetId);
+      if (path) { path.forEach((n) => collapsedComments.delete(n.id)); return i; }
+    }
+    return -1;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comments, targetId]);
+  const [shown, setShown] = useState(Math.max(COMMENT_BATCH, targetTopIdx + 1));
+  useEffect(() => { if (targetTopIdx + 1 > shown) setShown(targetTopIdx + 1); }, [targetTopIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!targetId) return;
+    // After the batch renders, bring the linked comment into view.
+    const el = document.getElementById(`comment-${targetId}`);
+    if (el) el.scrollIntoView({ block: "center" });
+  }, [targetId, targetTopIdx, comments]);
+  const visible = comments.slice(0, shown);
+  const remaining = comments.length - visible.length;
+  return (
+    <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>
+      {visible.map((c: any) => <Comment key={c.id} c={c} t={t} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
+      {remaining > 0 && (
+        <button onClick={() => setShown(shown + COMMENT_BATCH)} style={{ ...relBtn(t), marginTop: 14, width: "100%", padding: "9px 0" }}>
+          Load {Math.min(remaining, COMMENT_BATCH)} more {remaining === 1 ? "comment" : "comments"} ({remaining} hidden)
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
   const bp = useBreakpoint();
   const [saved, toggleSave] = useSaved("post", post.id);
@@ -926,10 +1063,12 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <>
         <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
-        {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
-        {post.type === "poll" && <PollBlock post={post} t={t} />}
-        {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-        <MediaBlock post={post} t={t} />
+        <ContentWarningGate warnings={post.warnings} t={t}>
+          {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
+          {post.type === "poll" && <PollBlock post={post} t={t} />}
+          {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
+          <MediaBlock post={post} t={t} />
+        </ContentWarningGate>
         </>
         )}
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0" }}>
@@ -938,9 +1077,10 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
           <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
           <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
         </div>
+        <CollectionTagger t={t} postId={post.id} />
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
-        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />)}</div>
+        <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />
       </div>
       <div><CommunitySidebar t={t} /></div>
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
@@ -959,6 +1099,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [spoilerFree, setSpoilerFree] = useState(!!profile.spoilerFree);
   const [spoilerTags, setSpoilerTags] = useState<string[]>(profile.spoilerTags || []);
   const toggleSpoilerTag = (k: string) => setSpoilerTags((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
+  const [mutedTagsEdit, setMutedTagsEdit] = useState<string[]>(profile.mutedTags || []);
+  const toggleMutedTag = (k: string) => setMutedTagsEdit((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [mutes, setMutes] = useState<{ id: string; username: string; type: string }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -988,6 +1130,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (blur !== profile.blurMedia) patch.blur_media = blur;
       if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
       if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
+      if (JSON.stringify(mutedTagsEdit) !== JSON.stringify(profile.mutedTags || [])) patch.muted_tags = mutedTagsEdit;
       if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile);
       if (Object.keys(patch).length) await updateMyProfile(patch);
       onSaved(patch.username); // navigates if username changed, else reloads
@@ -1032,6 +1175,11 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, opacity: spoilerFree ? 1 : 0.5 }}>
         {Object.keys(POST_FLAIRS).map((k) => { const on = spoilerTags.includes(k); return <span key={k} onClick={() => toggleSpoilerTag(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>; })}
       </div>
+      <label style={label}>MUTED TAGS</label>
+      <div style={{ color: t.muted, fontSize: 12, margin: "0 0 6px" }}>Posts with these tags never appear in your feeds (a "Show anyway" stays available):</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {Object.keys(POST_FLAIRS).map((k) => { const on = mutedTagsEdit.includes(k); return <span key={k} onClick={() => toggleMutedTag(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>; })}
+      </div>
       <label style={label}>MUTED / BLOCKED</label>
       {mutes.length === 0 ? (
         <div style={{ color: t.muted, fontSize: 13 }}>Nobody muted or blocked.</div>
@@ -1047,6 +1195,30 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
         <button onClick={onClose} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
         <button onClick={save} disabled={busy} style={{ ...relBtn(t, true), opacity: busy ? 0.6 : 1 }}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
+}
+
+// Public reading lists on a profile: chips linking to each /list/:id.
+function MemberCollections({ t, username }: any) {
+  const navigate = useNavigate();
+  const [lists, setLists] = useState<UiCollection[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetchCollectionsByUser(username).then((ls) => { if (active) setLists(ls); }).catch((e) => console.error("collections load failed", e));
+    return () => { active = false; };
+  }, [username]);
+  if (lists.length === 0) return null;
+  return (
+    <div style={{ margin: "4px 0 12px" }}>
+      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 8 }}>READING LISTS</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {lists.map((l) => (
+          <button key={l.id} onClick={() => navigate(`/list/${l.id}`)} style={{ ...relBtn(t), padding: "5px 12px", fontSize: 12 }}>
+            {l.name} <span style={{ opacity: 0.7 }}>· {l.count}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -1137,6 +1309,7 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
             </select>
           </div>
         )}
+        <MemberCollections t={t} username={profile.username} />
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
           {profile.posts.length === 0
             ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
@@ -1210,6 +1383,7 @@ function AppLayout() {
   const [blurMedia, setBlurMedia] = useState(true);
   const [spoilerFree, setSpoilerFree] = useState(false);
   const [spoilerTags, setSpoilerTags] = useState<string[]>([]);
+  const [mutedTags, setMutedTags] = useState<string[]>([]);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -1220,7 +1394,7 @@ function AppLayout() {
 
   // Resolve the current member's identity (username, mod flag, content prefs) for the shell.
   const refreshIdentity = () => fetchMyIdentity().then((id) => {
-    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); setSpoilerFree(id.spoilerFree); setSpoilerTags(id.spoilerTags); }
+    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); setSpoilerFree(id.spoilerFree); setSpoilerTags(id.spoilerTags); setMutedTags(id.mutedTags); }
   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshIdentity(); }, [user?.id]);
@@ -1257,11 +1431,18 @@ function AppLayout() {
   const goHome = () => navigate("/");
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
+  // Mute/unmute a tag account-wide: optimistic local flip, then persist.
+  const toggleMuteTag = (slug: string) => {
+    const next = mutedTags.includes(slug) ? mutedTags.filter((m) => m !== slug) : [...mutedTags, slug];
+    setMutedTags(next);
+    updateMyProfile({ muted_tags: next }).catch((e) => { console.error("mute tag failed", e); setMutedTags(mutedTags); });
+  };
+
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed, mutedTags, toggleMuteTag };
 
   return (
-    <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags }}>
+    <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags, mutedTags }}>
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30, flexWrap: phone ? "wrap" : "nowrap" }}>
         <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: phone ? 15 : 17, cursor: "pointer", padding: phone ? 0 : undefined }}>{community.name}</button>
@@ -1345,12 +1526,68 @@ function TagRoute() {
   const toggleFollow = () => {
     toggleTagFollow(slug as string, !followed).then(() => c.refreshFollowedTags?.()).catch((e) => console.error("follow toggle failed", e));
   };
+  const muted = c.mutedTags?.includes(slug);
   const header = (
-    <button onClick={toggleFollow} style={relBtn(t, followed)}>
-      {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
-    </button>
+    <div style={{ display: "flex", gap: 8 }}>
+      <button onClick={toggleFollow} style={relBtn(t, followed)}>
+        {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
+      </button>
+      <button onClick={() => c.toggleMuteTag?.(slug)} title={muted ? "Show this tag in your feeds again" : "Hide posts with this tag from your feeds"} style={relBtn(t, muted)}>
+        <VolumeX size={15} /> {muted ? "Muted" : "Mute"}
+      </button>
+    </div>
   );
   return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
+}
+
+function CollectionRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [meta, setMeta] = useState<UiCollection | null>(null);
+  const [posts, setPosts] = useState<UiPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [followed, setFollowed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const load = () => {
+    setLoading(true);
+    Promise.all([fetchCollection(id as string), fetchCollectionPosts(id as string), getMyCollectionFollow(id as string)])
+      .then(([m, p, f]) => { setMeta(m); setPosts(p); setFollowed(f); })
+      .catch((e) => console.error("collection load failed", e))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); load(); }, [id]);
+  useEffect(() => {
+    if (meta) setPageMeta({ title: `${meta.name} — ${community.name}`, description: meta.description || `A reading list by ${meta.owner} on ${community.name}.`, url: `/list/${meta.id}`, type: "website" });
+  }, [meta]);
+  const mine = !!meta && meta.owner === c.myUsername;
+  const toggleFollow = () => {
+    const next = !followed;
+    setFollowed(next); // optimistic
+    toggleCollectionFollow(id as string, next).catch((e) => { console.error("list follow failed", e); setFollowed(!next); });
+  };
+  const remove = () => deleteCollection(id as string).then(() => navigate(`/user/${meta?.owner}`)).catch((e) => console.error("list delete failed", e));
+  if (!loading && !meta) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Reading list not found.</div>;
+  const action = meta && (
+    <div style={{ display: "flex", gap: 8 }}>
+      <button onClick={toggleFollow} style={relBtn(t, followed)}>
+        {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
+      </button>
+      {mine && <button onClick={() => setConfirming(true)} style={{ ...relBtn(t), color: "#e0726b" }}>Delete</button>}
+    </div>
+  );
+  const followerCount = meta?.followers ?? 0;
+  return (
+    <>
+      <PostListPage t={t} title={meta?.name ?? "Reading list"}
+        sub={meta ? `by ${meta.owner} · ${meta.count} ${meta.count === 1 ? "post" : "posts"} · ${followerCount} ${followerCount === 1 ? "follower" : "followers"}${meta.description ? ` — ${meta.description}` : ""}` : null}
+        action={action} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername}
+        emptyText="Nothing in this list yet." />
+      {confirming && <ConfirmDialog t={t} title="Delete this reading list?" message="Followers lose it; the posts themselves stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={false} />}
+    </>
+  );
 }
 
 function SearchRoute() {
@@ -1451,6 +1688,69 @@ function FolderTagger({ t, targetType, targetId, folders, onChanged }: any) {
               </button>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Per-post reading-list assignment (mirrors FolderTagger, plus inline create).
+// Public lists, so it lives on the post page rather than the saved view.
+function CollectionTagger({ t, postId }: any) {
+  const [open, setOpen] = useState(false);
+  const [lists, setLists] = useState<UiCollection[] | null>(null);
+  const [inLists, setInLists] = useState<string[]>([]);
+  const [newName, setNewName] = useState("");
+  const [err, setErr] = useState("");
+  const expand = () => {
+    setOpen(!open);
+    if (lists === null) {
+      Promise.all([fetchMyCollections(), fetchCollectionMembership(postId)])
+        .then(([ls, m]) => { setLists(ls); setInLists(m); })
+        .catch((e) => console.error("lists load failed", e));
+    }
+  };
+  const toggle = (id: string) => {
+    const on = !inLists.includes(id);
+    setInLists((prev) => (on ? [...prev, id] : prev.filter((x) => x !== id))); // optimistic
+    toggleCollectionItem(id, postId, on)
+      .catch((e) => { console.error("list toggle failed", e); setInLists((prev) => (on ? prev.filter((x) => x !== id) : [...prev, id])); });
+  };
+  const create = () => {
+    const name = newName.trim();
+    if (!name) return;
+    setErr("");
+    createCollection(name)
+      .then((id) => {
+        setLists((prev) => [...(prev ?? []), { id, name, description: "", owner: "", count: 0, followers: 0 }]);
+        setNewName("");
+        toggle(id); // put the post straight into the new list
+      })
+      .catch((e) => setErr(/duplicate|unique/i.test(e?.message || "") ? "You already have a list with that name." : e?.message || "Create failed."));
+  };
+  return (
+    <div style={{ margin: "4px 0 0" }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={expand} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+        <BookOpen size={12} /> Reading lists {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(lists ?? []).map((l) => {
+              const on = inLists.includes(l.id);
+              return (
+                <button key={l.id} onClick={() => toggle(l.id)} disabled={lists === null}
+                  style={{ ...relBtn(t, on), padding: "3px 10px", fontSize: 12 }}>
+                  {l.name}
+                </button>
+              );
+            })}
+            <input value={newName} onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") create(); }}
+              placeholder="New list…"
+              style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "3px 10px", fontSize: 12, outline: "none", width: 110 }} />
+          </div>
+          {err && <div style={{ color: "#e0726b", fontSize: 12, marginTop: 4 }}>{err}</div>}
         </div>
       )}
     </div>
@@ -1562,6 +1862,7 @@ function PostRoute() {
     if (!post) return;
     const cover = (post.media || []).find((m) => typeof m === "string" && m.startsWith("http"));
     setPageMeta({ title: `${post.title} — ${community.name}`, description: clip(post.body) || community.blurb, image: cover, url: `/post/${post.id}`, type: "article" });
+    recordView({ id: post.id, title: post.title, author: post.author });
   }, [post]);
   if (!post) return <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 16px", color: c.t.muted, fontSize: 14 }}>Loading…</div>;
   return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} myUsername={c.myUsername} />;
@@ -1637,6 +1938,7 @@ export default function AppRoutes() {
         <Route path="post/:id" element={<PostRoute />} />
         <Route path="user/:username" element={<MemberRoute />} />
         <Route path="t/:slug" element={<TagRoute />} />
+        <Route path="list/:id" element={<CollectionRoute />} />
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />

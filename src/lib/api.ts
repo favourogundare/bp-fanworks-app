@@ -34,17 +34,17 @@ export function resetProfileCache() {
 }
 
 /** The signed-in member's identity for the app shell: profile id, username, mod flag, content prefs. */
-export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean; blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[] } | null> {
+export async function fetchMyIdentity(): Promise<{ profileId: string; username: string; isMod: boolean; blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[]; mutedTags: string[] } | null> {
   const { data: auth } = await supabase.auth.getUser()
   if (!auth.user) return null
   const { data } = await supabase
     .from('profiles')
-    .select('id, username, role, blur_media, spoiler_free, spoiler_tags')
+    .select('id, username, role, blur_media, spoiler_free, spoiler_tags, muted_tags')
     .eq('user_id', auth.user.id)
     .maybeSingle()
   if (!data) return null
   cachedProfileId = data.id
-  return { profileId: data.id, username: data.username, isMod: data.role === 'mod', blurMedia: data.blur_media ?? true, spoilerFree: data.spoiler_free ?? false, spoilerTags: data.spoiler_tags ?? [] }
+  return { profileId: data.id, username: data.username, isMod: data.role === 'mod', blurMedia: data.blur_media ?? true, spoilerFree: data.spoiler_free ?? false, spoilerTags: data.spoiler_tags ?? [], mutedTags: data.muted_tags ?? [] }
 }
 
 // ----- creating posts, comments, and uploading media -----
@@ -55,6 +55,7 @@ export async function createPost(input: {
   flairSlugs: string[]
   media?: string[]
   pollOptions?: string[]
+  contentWarnings?: string[]
   surface?: 'community' | 'profile'
 }): Promise<string> {
   const me = await getMyProfileId()
@@ -69,6 +70,7 @@ export async function createPost(input: {
       body: input.body,
       media: input.media ?? [],
       poll_options: input.pollOptions ?? [],
+      content_warnings: input.contentWarnings ?? [],
     })
     .select('id')
     .single()
@@ -191,7 +193,7 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, ' +
+  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -211,6 +213,7 @@ function mapPost(row: Row): UiPost {
     media: Array.isArray(row.media) ? (row.media as string[]) : [],
     links: Array.isArray(row.links) ? (row.links as string[]) : [],
     pollOptions: Array.isArray(row.poll_options) ? (row.poll_options as string[]) : [],
+    warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
     profilePinned: !!row.profile_pinned_at,
     commentCount: row.comments?.[0]?.count ?? 0,
@@ -434,6 +437,156 @@ export async function setProfilePin(postId: string, on: boolean): Promise<void> 
     .update({ profile_pinned_at: on ? new Date().toISOString() : null })
     .eq('id', postId)
   if (error) throw error
+}
+
+// ----- reading lists / collections (public, followable; MILESTONES §6) -----
+
+export interface UiCollection {
+  id: string
+  name: string
+  description: string
+  owner: string // username
+  count: number // posts in the list
+  followers: number
+}
+
+function mapCollection(r: Row): UiCollection {
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description ?? '',
+    owner: r.owner?.username ?? 'unknown',
+    count: r.collection_items?.[0]?.count ?? 0,
+    followers: r.collection_follows?.[0]?.count ?? 0,
+  }
+}
+
+const COLLECTION_FIELDS =
+  'id, name, description, created_at, owner:profiles!collections_owner_id_fkey!inner(username), collection_items(count), collection_follows(count)'
+
+/** A member's public collections, oldest first. */
+export async function fetchCollectionsByUser(username: string): Promise<UiCollection[]> {
+  const { data, error } = await supabase
+    .from('collections')
+    .select(COLLECTION_FIELDS)
+    .eq('owner.username', username)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map(mapCollection)
+}
+
+/** One collection's header info, or null if it doesn't exist. */
+export async function fetchCollection(id: string): Promise<UiCollection | null> {
+  const { data } = await supabase
+    .from('collections')
+    .select(COLLECTION_FIELDS)
+    .eq('id', id)
+    .maybeSingle()
+  return data ? mapCollection(data) : null
+}
+
+/** The posts in a collection, newest post first. */
+export async function fetchCollectionPosts(id: string): Promise<UiPost[]> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`${POST_FIELDS}, collection_items!inner(collection_id)`)
+    .eq('collection_items.collection_id', id)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
+/** Create a collection; duplicate names surface as a unique-violation error. */
+export async function createCollection(name: string, description = ''): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const clean = name.trim()
+  if (!clean || clean.length > 60) throw new Error('List names are 1-60 characters')
+  if (description.length > 300) throw new Error('Descriptions are up to 300 characters')
+  const { data, error } = await supabase
+    .from('collections')
+    .insert({ owner_id: me, name: clean, description: description.trim() })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id
+}
+
+/** Delete a collection (its item and follow rows cascade; posts stay). */
+export async function deleteCollection(id: string): Promise<void> {
+  const { error } = await supabase.from('collections').delete().eq('id', id)
+  if (error) throw error
+}
+
+/** The member's own collections (for the per-post picker), oldest first. */
+export async function fetchMyCollections(): Promise<UiCollection[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data, error } = await supabase
+    .from('collections')
+    .select(COLLECTION_FIELDS)
+    .eq('owner_id', me)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map(mapCollection)
+}
+
+/** Ids of the member's collections that already contain this post. */
+export async function fetchCollectionMembership(postId: string): Promise<string[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data } = await supabase
+    .from('collection_items')
+    .select('collection_id, collections!inner(owner_id)')
+    .eq('post_id', postId)
+    .eq('collections.owner_id', me)
+  return (data ?? []).map((r: Row) => r.collection_id)
+}
+
+/** Add (on=true) or remove a post from a collection the member owns. */
+export async function toggleCollectionItem(collectionId: string, postId: string, on: boolean): Promise<void> {
+  if (on) {
+    const { error } = await supabase
+      .from('collection_items')
+      .upsert({ collection_id: collectionId, post_id: postId }, { onConflict: 'collection_id,post_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('collection_items')
+      .delete()
+      .match({ collection_id: collectionId, post_id: postId })
+    if (error) throw error
+  }
+}
+
+/** Whether the signed-in member follows this collection. */
+export async function getMyCollectionFollow(collectionId: string): Promise<boolean> {
+  const me = await getMyProfileId()
+  if (!me) return false
+  const { data } = await supabase
+    .from('collection_follows')
+    .select('collection_id')
+    .match({ follower_id: me, collection_id: collectionId })
+    .maybeSingle()
+  return !!data
+}
+
+/** Follow (on=true) or unfollow a collection. */
+export async function toggleCollectionFollow(collectionId: string, on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (on) {
+    const { error } = await supabase
+      .from('collection_follows')
+      .upsert({ follower_id: me, collection_id: collectionId }, { onConflict: 'follower_id,collection_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('collection_follows')
+      .delete()
+      .match({ follower_id: me, collection_id: collectionId })
+    if (error) throw error
+  }
 }
 
 // ----- bookmark folders (private, RLS-scoped to the owner) -----
@@ -807,6 +960,7 @@ export async function updateMyProfile(fields: {
   blur_media?: boolean
   spoiler_free?: boolean
   spoiler_tags?: string[]
+  muted_tags?: string[]
 }): Promise<void> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -846,7 +1000,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -880,6 +1034,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
+    mutedTags: p.muted_tags ?? [],
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
