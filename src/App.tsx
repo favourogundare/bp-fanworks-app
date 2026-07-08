@@ -43,7 +43,13 @@ const community = {
   blurb:
     "A Wakanda-first community for fanfiction, art, music, cosplay, and discussion rooted in the Black Panther MCU films and comics canon. Source your artwork, flair your posts, and engage in good faith. Wakanda Forever.",
   created: "Jun 27, 2026",
-  bookmarks: ["Wiki", "Fanfic Archive", "Weekly Self-Promo Thread"],
+  // Bookmarks link to a route (`to`) or to a pinned post matched by title
+  // (`pinnedMatch`) so we never hardcode post ids.
+  bookmarks: [
+    { label: "Wiki", pinnedMatch: /lore megathread/i },
+    { label: "Fanfic Archive", to: "/t/fanfiction" },
+    { label: "Weekly Self-Promo Thread", pinnedMatch: /self-promo/i },
+  ],
   rules: [
     { title: "Source All Artwork and Scans", desc: "All fanart, cosplay photos, or music must clearly credit the original artist or creator in the post title or a comment. If you are the creator, you may tag it as [OC]." },
     { title: "Keep It Wakanda-Centric", desc: "This is a Wakanda-first community. The main focus of all posts should be characters, locations, and lore from the Black Panther MCU films and comics canon. Other Marvel characters are welcome if the post connects them to Wakandan characters or themes." },
@@ -473,8 +479,17 @@ function Rule({ rule, index, t, last }) {
 
 // ----- Community sidebar -----
 function CommunitySidebar({ t }) {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<{ members: number; contributions: number } | null>(null);
+  const [pinned, setPinned] = useState<any[]>([]);
   useEffect(() => { fetchCommunityStats().then(setStats).catch((e) => console.error("stats load failed", e)); }, []);
+  useEffect(() => { fetchPinned().then(setPinned).catch((e) => console.error("pinned load failed", e)); }, []);
+  // Resolve a bookmark to its target path, or null when nothing matches yet.
+  const bookmarkPath = (b: any): string | null => {
+    if (b.to) return b.to;
+    const hit = pinned.find((p) => b.pinnedMatch.test(p.title));
+    return hit ? `/post/${hit.id}` : null;
+  };
   return (
     <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 16 }}>
       <h4 style={{ color: t.heading, fontSize: 15, fontWeight: 800, margin: "0 0 8px" }}>{community.short}</h4>
@@ -489,7 +504,16 @@ function CommunitySidebar({ t }) {
         <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.contributions.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Contributions</div></div>
       </div>
       <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>COMMUNITY BOOKMARKS</div>
-      {community.bookmarks.map((b) => <div key={b} style={{ background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: "pointer" }}>{b}</div>)}
+      {community.bookmarks.map((b) => {
+        const to = bookmarkPath(b);
+        return (
+          <a key={b.label} href={to ?? undefined}
+            onClick={(e) => { e.preventDefault(); if (to) navigate(to); }}
+            style={{ display: "block", background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: to ? "pointer" : "default", textDecoration: "none" }}>
+            {b.label}
+          </a>
+        );
+      })}
       <div style={{ color: t.heading, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, margin: "16px 0 4px" }}>BLACK PANTHER FANWORKS RULES</div>
       {community.rules.map((r, i) => <Rule key={i} rule={r} index={i} t={t} last={i === community.rules.length - 1} />)}
     </div>
