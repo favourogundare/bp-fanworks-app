@@ -98,9 +98,11 @@ function escapeAttr(s: string): string {
 
 // ----- JSON-LD assembly (schema.org structured data, MILESTONES §11 #2) -----
 
-/** The WebSite node shared by every page's isPartOf. */
+/** The WebSite node shared by every page's isPartOf. The stable @id lets the
+ *  homepage WebSite node and each page's isPartOf reference merge into one
+ *  node in the structured-data graph instead of floating disconnected. */
 function websiteNode(origin: string): Record<string, unknown> {
-  return { '@type': 'WebSite', name: SITE, url: `${origin}/` }
+  return { '@type': 'WebSite', '@id': `${origin}/#website`, name: SITE, url: `${origin}/` }
 }
 
 /** BreadcrumbList: Home → (optional current page). */
@@ -149,7 +151,9 @@ async function buildMeta(url: URL): Promise<Meta | null> {
           headline: clip(post.title, 110),
           description: clip(post.body) || clip(COMMUNITY.blurb),
           image,
-          datePublished: String(post.created_at ?? ''),
+          // Omit rather than emit an empty string: schema.org flags "" as an
+          // invalid date value in the Rich Results Test.
+          ...(post.created_at ? { datePublished: String(post.created_at) } : {}),
           author: { '@type': 'Person', name: authorName, ...(authorUrl ? { url: authorUrl } : {}) },
           isPartOf: websiteNode(origin),
           interactionStatistic: [
@@ -193,7 +197,7 @@ async function buildMeta(url: URL): Promise<Meta | null> {
           '@type': 'ProfilePage',
           '@id': profileUrl,
           url: profileUrl,
-          dateCreated: String(p.created_at ?? ''),
+          ...(p.created_at ? { dateCreated: String(p.created_at) } : {}),
           isPartOf: websiteNode(origin),
           mainEntity: {
             '@type': 'Person',
