@@ -8,6 +8,7 @@ export interface UiComment {
   flair: string | null // "OP" when the commenter is the post's author
   body: string
   votes: number
+  deleted?: boolean // soft-deleted: body/author blanked, thread preserved
   replies: UiComment[]
 }
 
@@ -24,6 +25,8 @@ export interface UiPost {
   image?: boolean
   media: string[] // uploaded media URLs (may be empty; demo seed uses placeholders)
   links?: string[]
+  pollOptions: string[] // poll choice labels (empty unless type === 'poll')
+  warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
@@ -36,19 +39,31 @@ export interface UiPinned {
   comments: number
 }
 
-export interface UiProfile {
+// Lean fields for the username hover card — a subset of UiProfile that a
+// preview needs, without a full profile-page fetch (posts, follower counts).
+export interface UiUserPreview {
   id: string
   username: string
   display: string
   flair: string | null
+  age: string
+  isMod: boolean
+}
+
+export interface UiProfile extends UiUserPreview {
   banner: string
+  avatarUrl: string | null
+  ao3: string | null // AO3 profile link
+  kofi: string | null // Ko-fi link
+  blurMedia: boolean // personal pref: blur NSFW/spoiler media
+  spoilerFree: boolean // spoiler-free mode toggle
+  spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
+  mutedTags: string[] // flair slugs muted everywhere (independent of spoiler mode)
   followers: number
   karma: string
   contributions: number
-  age: string
   gold: number
   achievements: string
   unlocked: number
-  isMod: boolean
   posts: UiPost[]
 }

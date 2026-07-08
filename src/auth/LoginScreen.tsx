@@ -1,26 +1,15 @@
 import { useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { useAuth } from './AuthProvider'
-
-// Black & gold "golden-jaguar" palette, matching the community pages.
-const c = {
-  bg: '#0B0B0F',
-  panel: '#15141a',
-  panel2: '#1F1E26',
-  border: '#2e2b22',
-  text: '#ECE8DF',
-  muted: '#9b9488',
-  heading: '#C8A24A',
-  accent: '#C8A24A',
-  accentText: '#15110a',
-  error: '#e0726b',
-  ok: '#8fce9b',
-}
+import { goldPair, pawGradient } from '../lib/palettes'
+import { useTheme } from '../lib/theme'
 
 type Mode = 'signin' | 'signup' | 'reset'
 
 export function LoginScreen() {
   const { signIn, signUp, resetPassword } = useAuth()
+  const { mode: themeMode } = useTheme()
+  const c = goldPair[themeMode]
   const [mode, setMode] = useState<Mode>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -56,6 +45,81 @@ export function LoginScreen() {
     mode === 'signup' ? 'Create your account' : mode === 'reset' ? 'Reset your password' : 'Sign in'
   const submitLabel =
     mode === 'signup' ? 'Sign up' : mode === 'reset' ? 'Send reset link' : 'Sign in'
+
+  const page: CSSProperties = {
+    minHeight: '100vh',
+    background: c.bg,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    fontFamily: 'Inter, system-ui, sans-serif',
+  }
+
+  const card: CSSProperties = {
+    width: 380,
+    maxWidth: '100%',
+    background: c.panel,
+    border: `1px solid ${c.border}`,
+    borderRadius: 16,
+    padding: 24,
+    boxSizing: 'border-box',
+  }
+
+  const paw: CSSProperties = {
+    width: 48,
+    height: 48,
+    borderRadius: '50%',
+    background: pawGradient[themeMode],
+    border: `2px solid ${c.accent}`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 22,
+    flexShrink: 0,
+  }
+
+  const labelStyle: CSSProperties = {
+    display: 'block',
+    color: c.muted,
+    fontSize: 12,
+    fontWeight: 600,
+    margin: '12px 0 4px',
+  }
+
+  const input: CSSProperties = {
+    width: '100%',
+    background: c.bg,
+    border: `1px solid ${c.border}`,
+    borderRadius: 10,
+    padding: '10px 12px',
+    color: c.text,
+    fontSize: 14,
+    boxSizing: 'border-box',
+  }
+
+  const submitBtn: CSSProperties = {
+    width: '100%',
+    marginTop: 18,
+    background: c.accent,
+    color: c.accentText,
+    border: 'none',
+    borderRadius: 999,
+    padding: '11px 0',
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: 'pointer',
+  }
+
+  const linkBtn: CSSProperties = {
+    background: 'none',
+    border: 'none',
+    color: c.heading,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    padding: 0,
+  }
 
   return (
     <div style={page}>
@@ -138,79 +202,4 @@ export function LoginScreen() {
     setError(null)
     setNotice(null)
   }
-}
-
-const page: CSSProperties = {
-  minHeight: '100vh',
-  background: c.bg,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 16,
-  fontFamily: 'Inter, system-ui, sans-serif',
-}
-
-const card: CSSProperties = {
-  width: 380,
-  maxWidth: '100%',
-  background: c.panel,
-  border: `1px solid ${c.border}`,
-  borderRadius: 16,
-  padding: 24,
-  boxSizing: 'border-box',
-}
-
-const paw: CSSProperties = {
-  width: 48,
-  height: 48,
-  borderRadius: '50%',
-  background: 'radial-gradient(circle at 35% 30%, #2a2a2e, #050505)',
-  border: `2px solid ${c.accent}`,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: 22,
-  flexShrink: 0,
-}
-
-const labelStyle: CSSProperties = {
-  display: 'block',
-  color: c.muted,
-  fontSize: 12,
-  fontWeight: 600,
-  margin: '12px 0 4px',
-}
-
-const input: CSSProperties = {
-  width: '100%',
-  background: c.bg,
-  border: `1px solid ${c.border}`,
-  borderRadius: 10,
-  padding: '10px 12px',
-  color: c.text,
-  fontSize: 14,
-  boxSizing: 'border-box',
-}
-
-const submitBtn: CSSProperties = {
-  width: '100%',
-  marginTop: 18,
-  background: c.accent,
-  color: c.accentText,
-  border: 'none',
-  borderRadius: 999,
-  padding: '11px 0',
-  fontSize: 14,
-  fontWeight: 800,
-  cursor: 'pointer',
-}
-
-const linkBtn: CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: c.heading,
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: 'pointer',
-  padding: 0,
 }
