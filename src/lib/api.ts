@@ -191,7 +191,7 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, poll_options, ' +
+  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -212,6 +212,7 @@ function mapPost(row: Row): UiPost {
     links: Array.isArray(row.links) ? (row.links as string[]) : [],
     pollOptions: Array.isArray(row.poll_options) ? (row.poll_options as string[]) : [],
     pinned: !!row.pinned,
+    profilePinned: !!row.profile_pinned_at,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
   }
@@ -421,6 +422,18 @@ export async function togglePostFollow(postId: string, on: boolean): Promise<voi
       .match({ follower_id: me, post_id: postId })
     if (error) throw error
   }
+}
+
+// ----- pinned profile posts -----
+
+/** Pin (on=true) or unpin one of your own posts on your profile. RLS
+ *  posts_update_own restricts this to the author's rows. */
+export async function setProfilePin(postId: string, on: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ profile_pinned_at: on ? new Date().toISOString() : null })
+    .eq('id', postId)
+  if (error) throw error
 }
 
 // ----- bookmark folders (private, RLS-scoped to the owner) -----
@@ -845,6 +858,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .select(POST_FIELDS)
       .eq('author_id', p.id)
       .eq('surface', 'profile')
+      .order('profile_pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }),
     supabase
       .from('relationships')

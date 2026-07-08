@@ -27,6 +27,7 @@ export interface UiPost {
   links?: string[]
   pollOptions: string[] // poll choice labels (empty unless type === 'poll')
   pinned: boolean
+  profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
 }
