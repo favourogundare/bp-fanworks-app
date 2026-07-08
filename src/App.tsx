@@ -101,7 +101,7 @@ function Flair({ flairKey, plain = false }: any) {
 }
 
 // Signed-in member's content prefs, provided by AppLayout (blur pref reaches MediaBlock without prop drilling).
-const PrefsContext = createContext<{ blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[] }>({ blurMedia: true, spoilerFree: false, spoilerTags: [] });
+const PrefsContext = createContext<{ blurMedia: boolean; spoilerFree: boolean; spoilerTags: string[]; mutedTags: string[] }>({ blurMedia: true, spoilerFree: false, spoilerTags: [], mutedTags: [] });
 
 function Avatar({ seed, size = 36, t, url = null }: any) {
   if (url) return <img src={url} alt="" style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover", border: `1px solid ${t.border}` }} />;
@@ -384,10 +384,12 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const mine = !!myUsername && post.author === myUsername;
   const [saved, toggleSave] = useSaved("post", post.id);
   const hoverHandlers = useUsernameHoverCard(post.author);
-  const { spoilerFree, spoilerTags } = useContext(PrefsContext);
+  const { spoilerFree, spoilerTags, mutedTags } = useContext(PrefsContext);
   const [revealed, setRevealed] = useState(false);
   // Spoiler-free mode: hide posts carrying any tag the member marked as a spoiler.
   const spoilerHit = spoilerFree ? (post.flairs || []).filter((f: string) => spoilerTags.includes(f)) : [];
+  // Muted tags hide unconditionally (no mode toggle), same show-anyway escape.
+  const muteHit = (post.flairs || []).filter((f: string) => mutedTags.includes(f));
 
   const saveEdit = async () => {
     const tt = title.trim();
@@ -413,6 +415,13 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", display: "flex", alignItems: "center", gap: 10, color: t.muted, fontSize: 13 }}>
       <EyeOff size={15} />
       <span style={{ fontStyle: "italic" }}>Hidden by spoiler-free mode — tagged {spoilerHit.map((f: string) => POST_FLAIRS[f]?.label ?? f).join(", ")}.</span>
+      <button onClick={() => setRevealed(true)} style={{ ...relBtn(t), padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}>Show anyway</button>
+    </div>;
+  }
+  if (muteHit.length > 0 && !revealed) {
+    return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", display: "flex", alignItems: "center", gap: 10, color: t.muted, fontSize: 13 }}>
+      <VolumeX size={15} />
+      <span style={{ fontStyle: "italic" }}>Hidden — you muted {muteHit.map((f: string) => POST_FLAIRS[f]?.label ?? f).join(", ")}.</span>
       <button onClick={() => setRevealed(true)} style={{ ...relBtn(t), padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}>Show anyway</button>
     </div>;
   }
@@ -986,6 +995,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [spoilerFree, setSpoilerFree] = useState(!!profile.spoilerFree);
   const [spoilerTags, setSpoilerTags] = useState<string[]>(profile.spoilerTags || []);
   const toggleSpoilerTag = (k: string) => setSpoilerTags((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
+  const [mutedTagsEdit, setMutedTagsEdit] = useState<string[]>(profile.mutedTags || []);
+  const toggleMutedTag = (k: string) => setMutedTagsEdit((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [mutes, setMutes] = useState<{ id: string; username: string; type: string }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1015,6 +1026,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (blur !== profile.blurMedia) patch.blur_media = blur;
       if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
       if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
+      if (JSON.stringify(mutedTagsEdit) !== JSON.stringify(profile.mutedTags || [])) patch.muted_tags = mutedTagsEdit;
       if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile);
       if (Object.keys(patch).length) await updateMyProfile(patch);
       onSaved(patch.username); // navigates if username changed, else reloads
@@ -1058,6 +1070,11 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <div style={{ color: t.muted, fontSize: 12, margin: "8px 0 6px" }}>Tags to hide{spoilerFree ? "" : " (mode off)"}:</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, opacity: spoilerFree ? 1 : 0.5 }}>
         {Object.keys(POST_FLAIRS).map((k) => { const on = spoilerTags.includes(k); return <span key={k} onClick={() => toggleSpoilerTag(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>; })}
+      </div>
+      <label style={label}>MUTED TAGS</label>
+      <div style={{ color: t.muted, fontSize: 12, margin: "0 0 6px" }}>Posts with these tags never appear in your feeds (a "Show anyway" stays available):</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {Object.keys(POST_FLAIRS).map((k) => { const on = mutedTagsEdit.includes(k); return <span key={k} onClick={() => toggleMutedTag(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.55 }}><Flair flairKey={k} plain /></span>; })}
       </div>
       <label style={label}>MUTED / BLOCKED</label>
       {mutes.length === 0 ? (
@@ -1237,6 +1254,7 @@ function AppLayout() {
   const [blurMedia, setBlurMedia] = useState(true);
   const [spoilerFree, setSpoilerFree] = useState(false);
   const [spoilerTags, setSpoilerTags] = useState<string[]>([]);
+  const [mutedTags, setMutedTags] = useState<string[]>([]);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -1247,7 +1265,7 @@ function AppLayout() {
 
   // Resolve the current member's identity (username, mod flag, content prefs) for the shell.
   const refreshIdentity = () => fetchMyIdentity().then((id) => {
-    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); setSpoilerFree(id.spoilerFree); setSpoilerTags(id.spoilerTags); }
+    if (id) { setMyUsername(id.username); setMyIsMod(id.isMod); setBlurMedia(id.blurMedia); setSpoilerFree(id.spoilerFree); setSpoilerTags(id.spoilerTags); setMutedTags(id.mutedTags); }
   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshIdentity(); }, [user?.id]);
@@ -1284,11 +1302,18 @@ function AppLayout() {
   const goHome = () => navigate("/");
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
+  // Mute/unmute a tag account-wide: optimistic local flip, then persist.
+  const toggleMuteTag = (slug: string) => {
+    const next = mutedTags.includes(slug) ? mutedTags.filter((m) => m !== slug) : [...mutedTags, slug];
+    setMutedTags(next);
+    updateMyProfile({ muted_tags: next }).catch((e) => { console.error("mute tag failed", e); setMutedTags(mutedTags); });
+  };
+
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed, mutedTags, toggleMuteTag };
 
   return (
-    <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags }}>
+    <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags, mutedTags }}>
     <div style={{ background: t.bg, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: t.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.bg, zIndex: 30, flexWrap: phone ? "wrap" : "nowrap" }}>
         <button onClick={goHome} style={{ background: "none", border: "none", color: t.heading, fontWeight: 800, fontSize: phone ? 15 : 17, cursor: "pointer", padding: phone ? 0 : undefined }}>{community.name}</button>
@@ -1372,10 +1397,16 @@ function TagRoute() {
   const toggleFollow = () => {
     toggleTagFollow(slug as string, !followed).then(() => c.refreshFollowedTags?.()).catch((e) => console.error("follow toggle failed", e));
   };
+  const muted = c.mutedTags?.includes(slug);
   const header = (
-    <button onClick={toggleFollow} style={relBtn(t, followed)}>
-      {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
-    </button>
+    <div style={{ display: "flex", gap: 8 }}>
+      <button onClick={toggleFollow} style={relBtn(t, followed)}>
+        {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
+      </button>
+      <button onClick={() => c.toggleMuteTag?.(slug)} title={muted ? "Show this tag in your feeds again" : "Hide posts with this tag from your feeds"} style={relBtn(t, muted)}>
+        <VolumeX size={15} /> {muted ? "Muted" : "Mute"}
+      </button>
+    </div>
   );
   return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
 }
