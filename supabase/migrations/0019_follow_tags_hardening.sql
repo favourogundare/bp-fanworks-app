@@ -1,5 +1,5 @@
 -- Follow a tag (MILESTONES §2), part 2 of 2: table, RLS, and notify trigger.
--- Split from 0016 so the 'tagged_post' enum value is committed before anything
+-- Split from 0018 so the 'tagged_post' enum value is committed before anything
 -- here references it.
 --
 -- Written idempotently on purpose: earlier deployments created tag_follows and
