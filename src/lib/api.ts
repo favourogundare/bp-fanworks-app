@@ -337,6 +337,38 @@ export async function toggleSaved(targetType: VoteTarget, targetId: string, on: 
   }
 }
 
+// ----- post follows (persisted "Follow" button on a post) -----
+
+/** Whether the signed-in member is following this post. */
+export async function getMyPostFollow(postId: string): Promise<boolean> {
+  const me = await getMyProfileId()
+  if (!me) return false
+  const { data } = await supabase
+    .from('post_follows')
+    .select('post_id')
+    .match({ follower_id: me, post_id: postId })
+    .maybeSingle()
+  return !!data
+}
+
+/** Follow (on=true) or unfollow a post. */
+export async function togglePostFollow(postId: string, on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (on) {
+    const { error } = await supabase
+      .from('post_follows')
+      .upsert({ follower_id: me, post_id: postId }, { onConflict: 'follower_id,post_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('post_follows')
+      .delete()
+      .match({ follower_id: me, post_id: postId })
+    if (error) throw error
+  }
+}
+
 /** The member's saved posts, most recently saved first. */
 export async function fetchSavedPosts(): Promise<UiPost[]> {
   const me = await getMyProfileId()
