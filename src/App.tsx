@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useContext, createContext } from "react";
+import React, { useState, useEffect, useMemo, useRef, useContext, createContext } from "react";
 import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen,
@@ -321,8 +321,16 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
     finally { setBusy(false); setConfirming(false); }
   };
 
+  const isTarget = typeof window !== "undefined" && window.location.hash === `#comment-${c.id}`;
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyCommentLink = () => {
+    const url = `${window.location.origin}/post/${postId}#comment-${c.id}`;
+    if (navigator.clipboard) navigator.clipboard.writeText(url).catch(() => {});
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  };
   return (
-    <div style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0 }}>
+    <div id={`comment-${c.id}`} style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0, ...(isTarget ? { outline: `2px solid ${t.accent}`, outlineOffset: 4, borderRadius: 8 } : null) }}>
       <div onClick={toggleCollapsed} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }} title={collapsed ? "Expand thread" : "Collapse thread"}>
         <button style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex" }} aria-label={collapsed ? "Expand thread" : "Collapse thread"}>
           {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
@@ -358,7 +366,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
             {mine && <span onClick={() => setEditing(!editing)} style={{ cursor: "pointer" }}>Edit</span>}
             {mine && <span onClick={() => setConfirming(true)} style={{ cursor: busy ? "default" : "pointer", color: "#e0726b", opacity: busy ? 0.6 : 1 }}>Delete</span>}
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Share2 size={14} /> Share</span>
+            <span onClick={copyCommentLink} title="Copy a direct link to this comment" style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: linkCopied ? t.accent : undefined }}><Share2 size={14} /> {linkCopied ? "Link copied!" : "Share"}</span>
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
           {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
@@ -858,6 +866,50 @@ function PollBlock({ post, t }: any) {
   );
 }
 
+const COMMENT_BATCH = 25;
+
+// Top-level comments render in batches with a "load more" button. A
+// #comment-<id> permalink expands collapsed ancestors, force-includes its
+// batch, and scrolls the target into view.
+function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor }: any) {
+  const targetId = window.location.hash.startsWith("#comment-") ? window.location.hash.slice("#comment-".length) : null;
+  // Path from a top-level comment to the target (indices of ancestors), or null.
+  const findPath = (c: any, id: string): any[] | null => {
+    if (c.id === id) return [c];
+    for (const r of c.replies ?? []) { const p = findPath(r, id); if (p) return [c, ...p]; }
+    return null;
+  };
+  const targetTopIdx = useMemo(() => {
+    if (!targetId) return -1;
+    for (let i = 0; i < comments.length; i++) {
+      const path = findPath(comments[i], targetId);
+      if (path) { path.forEach((n) => collapsedComments.delete(n.id)); return i; }
+    }
+    return -1;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comments, targetId]);
+  const [shown, setShown] = useState(Math.max(COMMENT_BATCH, targetTopIdx + 1));
+  useEffect(() => { if (targetTopIdx + 1 > shown) setShown(targetTopIdx + 1); }, [targetTopIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!targetId) return;
+    // After the batch renders, bring the linked comment into view.
+    const el = document.getElementById(`comment-${targetId}`);
+    if (el) el.scrollIntoView({ block: "center" });
+  }, [targetId, targetTopIdx, comments]);
+  const visible = comments.slice(0, shown);
+  const remaining = comments.length - visible.length;
+  return (
+    <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>
+      {visible.map((c: any) => <Comment key={c.id} c={c} t={t} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
+      {remaining > 0 && (
+        <button onClick={() => setShown(shown + COMMENT_BATCH)} style={{ ...relBtn(t), marginTop: 14, width: "100%", padding: "9px 0" }}>
+          Load {Math.min(remaining, COMMENT_BATCH)} more {remaining === 1 ? "comment" : "comments"} ({remaining} hidden)
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
   const bp = useBreakpoint();
   const [saved, toggleSave] = useSaved("post", post.id);
@@ -934,7 +986,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         </div>
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
-        <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />)}</div>
+        <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />
       </div>
       <div><CommunitySidebar t={t} /></div>
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
