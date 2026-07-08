@@ -55,6 +55,7 @@ export async function createPost(input: {
   flairSlugs: string[]
   media?: string[]
   pollOptions?: string[]
+  contentWarnings?: string[]
   surface?: 'community' | 'profile'
 }): Promise<string> {
   const me = await getMyProfileId()
@@ -69,6 +70,7 @@ export async function createPost(input: {
       body: input.body,
       media: input.media ?? [],
       poll_options: input.pollOptions ?? [],
+      content_warnings: input.contentWarnings ?? [],
     })
     .select('id')
     .single()
@@ -191,7 +193,7 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, poll_options, ' +
+  'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -211,6 +213,7 @@ function mapPost(row: Row): UiPost {
     media: Array.isArray(row.media) ? (row.media as string[]) : [],
     links: Array.isArray(row.links) ? (row.links as string[]) : [],
     pollOptions: Array.isArray(row.poll_options) ? (row.poll_options as string[]) : [],
+    warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
