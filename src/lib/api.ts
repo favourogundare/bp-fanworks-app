@@ -305,6 +305,50 @@ export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
     .map(mapPost)
 }
 
+// ----- followed tags (flairs) -----
+
+/** Flair slugs the signed-in member follows. */
+export async function fetchMyFollowedTags(): Promise<string[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data } = await supabase.from('tag_follows').select('flair_slug').eq('follower_id', me)
+  return (data ?? []).map((r: Row) => r.flair_slug)
+}
+
+/** Follow (on=true) or unfollow a flair. */
+export async function toggleTagFollow(slug: string, on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (on) {
+    const { error } = await supabase
+      .from('tag_follows')
+      .upsert({ follower_id: me, flair_slug: slug }, { onConflict: 'follower_id,flair_slug' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from('tag_follows').delete().match({ follower_id: me, flair_slug: slug })
+    if (error) throw error
+  }
+}
+
+/** Community posts carrying any flair the member follows, newest first. */
+export async function fetchFollowedFeed(): Promise<UiPost[]> {
+  const slugs = await fetchMyFollowedTags()
+  if (!slugs.length) return []
+  // Same join-rooted shape as fetchTagFeed; dedup posts that match >1 followed tag.
+  const { data, error } = await supabase
+    .from('post_flairs')
+    .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
+    .in('flairs.slug', slugs)
+    .eq('post.surface', 'community')
+  if (error) throw error
+  const seen = new Set<string>()
+  return (data ?? [])
+    .map((r: Row) => r.post)
+    .filter((p: Row) => p && !seen.has(p.id) && seen.add(p.id))
+    .sort((a: Row, b: Row) => (a.created_at < b.created_at ? 1 : -1))
+    .map(mapPost)
+}
+
 // ----- saved / bookmarked items (private, RLS-scoped to the saver) -----
 
 /** Whether the signed-in member has saved this target. */
@@ -400,7 +444,7 @@ export async function fetchSavedComments(): Promise<SavedComment[]> {
 
 export interface UiNotification {
   id: string
-  type: 'reply' | 'mention' | 'vote_milestone'
+  type: 'reply' | 'mention' | 'vote_milestone' | 'tagged_post'
   actor: string
   postId: string | null
   postTitle: string

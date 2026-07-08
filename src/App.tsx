@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed } from "./lib/api";
 import type { FeedSort, UiNotification } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -703,7 +703,7 @@ function contentGrid(bp: "phone" | "tablet" | "desktop"): React.CSSProperties {
   return { display: "grid", gridTemplateColumns: cols, gap: 24, maxWidth: 1100, margin: "0 auto", padding: "0 16px" };
 }
 
-function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, myUsername, onChanged }: any) {
+function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged }: any) {
   const bp = useBreakpoint();
   return (
     <div style={contentGrid(bp)}>
@@ -726,17 +726,18 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
             </div>
           </>
         )}
-        <div style={{ display: "flex", gap: 8, padding: "8px 0" }}>
+        <div style={{ display: "flex", gap: 8, padding: "8px 0", flexWrap: "wrap" }}>
           {(["new", "hot", "top"] as const).map((k) => (
-            <button key={k} onClick={() => onSort(k)} style={relBtn(t, sort === k)}>
+            <button key={k} onClick={() => onSort(k)} style={relBtn(t, !following && sort === k)}>
               {k[0].toUpperCase() + k.slice(1)}
             </button>
           ))}
+          <button onClick={() => onSort("following")} style={relBtn(t, following)}><Bell size={14} /> Following</button>
         </div>
         {loading ? (
           <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading posts…</div>
         ) : posts.length === 0 ? (
-          <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No posts yet. Be the first to post!</div>
+          <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{following ? "No posts in tags you follow yet. Open a tag and hit Follow." : "No posts yet. Be the first to post!"}</div>
         ) : (
           posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} />)
         )}
@@ -1157,6 +1158,8 @@ function AppLayout() {
   const [pinned, setPinned] = useState<UiPinned[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [sort, setSort] = useState<FeedSort>("new");
+  const [following, setFollowing] = useState(false);
+  const [followedTags, setFollowedTags] = useState<string[]>([]);
   const [myUsername, setMyUsername] = useState<string | null>(null);
   const [myIsMod, setMyIsMod] = useState(false);
   const [blurMedia, setBlurMedia] = useState(true);
@@ -1177,17 +1180,25 @@ function AppLayout() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshIdentity(); }, [user?.id]);
 
-  // Load the community feed + pinned highlights (callable, so new posts refresh it).
-  const loadFeed = async (s: FeedSort = sort) => {
+  // Load the feed + pinned highlights. `foll` true = only tags you follow.
+  const loadFeed = async (s: FeedSort = sort, foll: boolean = following) => {
     try {
-      const [f, p] = await Promise.all([fetchCommunityFeed(s), fetchPinned()]);
+      const [f, p] = await Promise.all([foll ? fetchFollowedFeed() : fetchCommunityFeed(s), fetchPinned()]);
       setFeed(f); setPinned(p);
     } catch (e) { console.error("feed load failed", e); }
     finally { setFeedLoading(false); }
   };
-  const changeSort = (s: FeedSort) => { setSort(s); setFeedLoading(true); loadFeed(s); };
+  // Tabs: new/hot/top sort the community feed; "following" swaps to the followed feed.
+  const changeSort = (s: FeedSort | "following") => {
+    setFeedLoading(true);
+    if (s === "following") { setFollowing(true); loadFeed(sort, true); }
+    else { setFollowing(false); setSort(s); loadFeed(s, false); }
+  };
+  const refreshFollowedTags = () => fetchMyFollowedTags().then(setFollowedTags).catch((e) => console.error("followed tags load failed", e));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadFeed(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (user?.id) refreshFollowedTags(); }, [user?.id]);
 
   // The set of usernames hidden from the feed (people you've muted or blocked).
   const refreshHidden = () => {
@@ -1202,7 +1213,7 @@ function AppLayout() {
   const openChatWith = (p: any) => { setChatTarget({ profileId: p.id, username: p.username }); setShowChat(true); };
 
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed };
 
   return (
     <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags }}>
@@ -1248,16 +1259,19 @@ function AppLayout() {
 function LandingRoute() {
   const c: any = useOutletContext();
   useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
-  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
+  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
 }
 
 // Shared list layout for tag-filter and search-result pages.
-function PostListPage({ t, title, sub, posts, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
+function PostListPage({ t, title, sub, action, posts, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
-      <div style={{ padding: "20px 0 4px" }}>
-        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>{title}</h1>
-        {sub && <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>{sub}</div>}
+      <div style={{ padding: "20px 0 4px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>{title}</h1>
+          {sub && <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>{sub}</div>}
+        </div>
+        {action}
       </div>
       {loading ? (
         <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading posts…</div>
@@ -1272,6 +1286,7 @@ function PostListPage({ t, title, sub, posts, loading, mutedUsers, onOpen, onAut
 
 function TagRoute() {
   const c: any = useOutletContext();
+  const t = c.t;
   const { slug } = useParams();
   const [posts, setPosts] = useState<UiPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1281,7 +1296,16 @@ function TagRoute() {
   }, [slug]);
   const label = POST_FLAIRS[slug as string]?.label ?? slug;
   useEffect(() => { setPageMeta({ title: `${label} — ${community.name}`, description: `${label} posts on ${community.name}.`, url: `/t/${slug}`, type: "website" }); }, [slug, label]);
-  return <PostListPage t={c.t} title={label} sub={`Posts tagged ${label}`} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
+  const followed = c.followedTags?.includes(slug);
+  const toggleFollow = () => {
+    toggleTagFollow(slug as string, !followed).then(() => c.refreshFollowedTags?.()).catch((e) => console.error("follow toggle failed", e));
+  };
+  const header = (
+    <button onClick={toggleFollow} style={relBtn(t, followed)}>
+      {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
+    </button>
+  );
+  return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
 }
 
 function SearchRoute() {
@@ -1319,6 +1343,7 @@ function InboxRoute() {
   const line = (n: UiNotification) =>
     n.type === "reply" ? `replied to you on “${n.postTitle}”`
     : n.type === "mention" ? `mentioned you on “${n.postTitle}”`
+    : n.type === "tagged_post" ? `posted “${n.postTitle}” in a tag you follow`
     : `your post “${n.postTitle}” is getting votes`;
   const hasUnread = items.some((n) => n.unread);
   return (
