@@ -11,8 +11,8 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
-import type { FeedSort, UiNotification, UiFolder } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
@@ -932,6 +932,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
           <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
           <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
         </div>
+        <CollectionTagger t={t} postId={post.id} />
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>{(post.comments ?? []).map((c: any) => <Comment key={c.id} c={c} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />)}</div>
@@ -1046,6 +1047,30 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   );
 }
 
+// Public reading lists on a profile: chips linking to each /list/:id.
+function MemberCollections({ t, username }: any) {
+  const navigate = useNavigate();
+  const [lists, setLists] = useState<UiCollection[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetchCollectionsByUser(username).then((ls) => { if (active) setLists(ls); }).catch((e) => console.error("collections load failed", e));
+    return () => { active = false; };
+  }, [username]);
+  if (lists.length === 0) return null;
+  return (
+    <div style={{ margin: "4px 0 12px" }}>
+      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 8 }}>READING LISTS</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {lists.map((l) => (
+          <button key={l.id} onClick={() => navigate(`/list/${l.id}`)} style={{ ...relBtn(t), padding: "5px 12px", fontSize: 12 }}>
+            {l.name} <span style={{ opacity: 0.7 }}>· {l.count}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
@@ -1131,6 +1156,7 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
             </select>
           </div>
         )}
+        <MemberCollections t={t} username={profile.username} />
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
           {profile.posts.length === 0
             ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
@@ -1347,6 +1373,56 @@ function TagRoute() {
   return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
 }
 
+function CollectionRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [meta, setMeta] = useState<UiCollection | null>(null);
+  const [posts, setPosts] = useState<UiPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [followed, setFollowed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const load = () => {
+    setLoading(true);
+    Promise.all([fetchCollection(id as string), fetchCollectionPosts(id as string), getMyCollectionFollow(id as string)])
+      .then(([m, p, f]) => { setMeta(m); setPosts(p); setFollowed(f); })
+      .catch((e) => console.error("collection load failed", e))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); load(); }, [id]);
+  useEffect(() => {
+    if (meta) setPageMeta({ title: `${meta.name} — ${community.name}`, description: meta.description || `A reading list by ${meta.owner} on ${community.name}.`, url: `/list/${meta.id}`, type: "website" });
+  }, [meta]);
+  const mine = !!meta && meta.owner === c.myUsername;
+  const toggleFollow = () => {
+    const next = !followed;
+    setFollowed(next); // optimistic
+    toggleCollectionFollow(id as string, next).catch((e) => { console.error("list follow failed", e); setFollowed(!next); });
+  };
+  const remove = () => deleteCollection(id as string).then(() => navigate(`/user/${meta?.owner}`)).catch((e) => console.error("list delete failed", e));
+  if (!loading && !meta) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Reading list not found.</div>;
+  const action = meta && (
+    <div style={{ display: "flex", gap: 8 }}>
+      <button onClick={toggleFollow} style={relBtn(t, followed)}>
+        {followed ? <BellOff size={15} /> : <Bell size={15} />} {followed ? "Following" : "Follow"}
+      </button>
+      {mine && <button onClick={() => setConfirming(true)} style={{ ...relBtn(t), color: "#e0726b" }}>Delete</button>}
+    </div>
+  );
+  const followerCount = meta?.followers ?? 0;
+  return (
+    <>
+      <PostListPage t={t} title={meta?.name ?? "Reading list"}
+        sub={meta ? `by ${meta.owner} · ${meta.count} ${meta.count === 1 ? "post" : "posts"} · ${followerCount} ${followerCount === 1 ? "follower" : "followers"}${meta.description ? ` — ${meta.description}` : ""}` : null}
+        action={action} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername}
+        emptyText="Nothing in this list yet." />
+      {confirming && <ConfirmDialog t={t} title="Delete this reading list?" message="Followers lose it; the posts themselves stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={false} />}
+    </>
+  );
+}
+
 function SearchRoute() {
   const c: any = useOutletContext();
   const [params] = useSearchParams();
@@ -1445,6 +1521,69 @@ function FolderTagger({ t, targetType, targetId, folders, onChanged }: any) {
               </button>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Per-post reading-list assignment (mirrors FolderTagger, plus inline create).
+// Public lists, so it lives on the post page rather than the saved view.
+function CollectionTagger({ t, postId }: any) {
+  const [open, setOpen] = useState(false);
+  const [lists, setLists] = useState<UiCollection[] | null>(null);
+  const [inLists, setInLists] = useState<string[]>([]);
+  const [newName, setNewName] = useState("");
+  const [err, setErr] = useState("");
+  const expand = () => {
+    setOpen(!open);
+    if (lists === null) {
+      Promise.all([fetchMyCollections(), fetchCollectionMembership(postId)])
+        .then(([ls, m]) => { setLists(ls); setInLists(m); })
+        .catch((e) => console.error("lists load failed", e));
+    }
+  };
+  const toggle = (id: string) => {
+    const on = !inLists.includes(id);
+    setInLists((prev) => (on ? [...prev, id] : prev.filter((x) => x !== id))); // optimistic
+    toggleCollectionItem(id, postId, on)
+      .catch((e) => { console.error("list toggle failed", e); setInLists((prev) => (on ? prev.filter((x) => x !== id) : [...prev, id])); });
+  };
+  const create = () => {
+    const name = newName.trim();
+    if (!name) return;
+    setErr("");
+    createCollection(name)
+      .then((id) => {
+        setLists((prev) => [...(prev ?? []), { id, name, description: "", owner: "", count: 0, followers: 0 }]);
+        setNewName("");
+        toggle(id); // put the post straight into the new list
+      })
+      .catch((e) => setErr(/duplicate|unique/i.test(e?.message || "") ? "You already have a list with that name." : e?.message || "Create failed."));
+  };
+  return (
+    <div style={{ margin: "4px 0 0" }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={expand} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
+        <BookOpen size={12} /> Reading lists {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(lists ?? []).map((l) => {
+              const on = inLists.includes(l.id);
+              return (
+                <button key={l.id} onClick={() => toggle(l.id)} disabled={lists === null}
+                  style={{ ...relBtn(t, on), padding: "3px 10px", fontSize: 12 }}>
+                  {l.name}
+                </button>
+              );
+            })}
+            <input value={newName} onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") create(); }}
+              placeholder="New list…"
+              style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "3px 10px", fontSize: 12, outline: "none", width: 110 }} />
+          </div>
+          {err && <div style={{ color: "#e0726b", fontSize: 12, marginTop: 4 }}>{err}</div>}
         </div>
       )}
     </div>
@@ -1631,6 +1770,7 @@ export default function AppRoutes() {
         <Route path="post/:id" element={<PostRoute />} />
         <Route path="user/:username" element={<MemberRoute />} />
         <Route path="t/:slug" element={<TagRoute />} />
+        <Route path="list/:id" element={<CollectionRoute />} />
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
