@@ -423,6 +423,156 @@ export async function togglePostFollow(postId: string, on: boolean): Promise<voi
   }
 }
 
+// ----- reading lists / collections (public, followable; MILESTONES §6) -----
+
+export interface UiCollection {
+  id: string
+  name: string
+  description: string
+  owner: string // username
+  count: number // posts in the list
+  followers: number
+}
+
+function mapCollection(r: Row): UiCollection {
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description ?? '',
+    owner: r.owner?.username ?? 'unknown',
+    count: r.collection_items?.[0]?.count ?? 0,
+    followers: r.collection_follows?.[0]?.count ?? 0,
+  }
+}
+
+const COLLECTION_FIELDS =
+  'id, name, description, created_at, owner:profiles!collections_owner_id_fkey!inner(username), collection_items(count), collection_follows(count)'
+
+/** A member's public collections, oldest first. */
+export async function fetchCollectionsByUser(username: string): Promise<UiCollection[]> {
+  const { data, error } = await supabase
+    .from('collections')
+    .select(COLLECTION_FIELDS)
+    .eq('owner.username', username)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map(mapCollection)
+}
+
+/** One collection's header info, or null if it doesn't exist. */
+export async function fetchCollection(id: string): Promise<UiCollection | null> {
+  const { data } = await supabase
+    .from('collections')
+    .select(COLLECTION_FIELDS)
+    .eq('id', id)
+    .maybeSingle()
+  return data ? mapCollection(data) : null
+}
+
+/** The posts in a collection, newest post first. */
+export async function fetchCollectionPosts(id: string): Promise<UiPost[]> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`${POST_FIELDS}, collection_items!inner(collection_id)`)
+    .eq('collection_items.collection_id', id)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
+/** Create a collection; duplicate names surface as a unique-violation error. */
+export async function createCollection(name: string, description = ''): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const clean = name.trim()
+  if (!clean || clean.length > 60) throw new Error('List names are 1-60 characters')
+  if (description.length > 300) throw new Error('Descriptions are up to 300 characters')
+  const { data, error } = await supabase
+    .from('collections')
+    .insert({ owner_id: me, name: clean, description: description.trim() })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id
+}
+
+/** Delete a collection (its item and follow rows cascade; posts stay). */
+export async function deleteCollection(id: string): Promise<void> {
+  const { error } = await supabase.from('collections').delete().eq('id', id)
+  if (error) throw error
+}
+
+/** The member's own collections (for the per-post picker), oldest first. */
+export async function fetchMyCollections(): Promise<UiCollection[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data, error } = await supabase
+    .from('collections')
+    .select(COLLECTION_FIELDS)
+    .eq('owner_id', me)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map(mapCollection)
+}
+
+/** Ids of the member's collections that already contain this post. */
+export async function fetchCollectionMembership(postId: string): Promise<string[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data } = await supabase
+    .from('collection_items')
+    .select('collection_id, collections!inner(owner_id)')
+    .eq('post_id', postId)
+    .eq('collections.owner_id', me)
+  return (data ?? []).map((r: Row) => r.collection_id)
+}
+
+/** Add (on=true) or remove a post from a collection the member owns. */
+export async function toggleCollectionItem(collectionId: string, postId: string, on: boolean): Promise<void> {
+  if (on) {
+    const { error } = await supabase
+      .from('collection_items')
+      .upsert({ collection_id: collectionId, post_id: postId }, { onConflict: 'collection_id,post_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('collection_items')
+      .delete()
+      .match({ collection_id: collectionId, post_id: postId })
+    if (error) throw error
+  }
+}
+
+/** Whether the signed-in member follows this collection. */
+export async function getMyCollectionFollow(collectionId: string): Promise<boolean> {
+  const me = await getMyProfileId()
+  if (!me) return false
+  const { data } = await supabase
+    .from('collection_follows')
+    .select('collection_id')
+    .match({ follower_id: me, collection_id: collectionId })
+    .maybeSingle()
+  return !!data
+}
+
+/** Follow (on=true) or unfollow a collection. */
+export async function toggleCollectionFollow(collectionId: string, on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (on) {
+    const { error } = await supabase
+      .from('collection_follows')
+      .upsert({ follower_id: me, collection_id: collectionId }, { onConflict: 'follower_id,collection_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase
+      .from('collection_follows')
+      .delete()
+      .match({ follower_id: me, collection_id: collectionId })
+    if (error) throw error
+  }
+}
+
 // ----- bookmark folders (private, RLS-scoped to the owner) -----
 
 export interface UiFolder {
