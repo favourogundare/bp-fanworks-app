@@ -69,6 +69,8 @@ type Meta = {
   image: string
   url: string
   type: 'website' | 'article' | 'profile'
+  // schema.org JSON-LD objects rendered as <script type="application/ld+json">
+  jsonLd: Record<string, unknown>[]
 }
 
 /** Collapse whitespace and clip to `n` chars for a meta description. */
@@ -94,6 +96,22 @@ function escapeAttr(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+// ----- JSON-LD assembly (schema.org structured data, MILESTONES §11 #2) -----
+
+/** The WebSite node shared by every page's isPartOf. */
+function websiteNode(origin: string): Record<string, unknown> {
+  return { '@type': 'WebSite', name: SITE, url: `${origin}/` }
+}
+
+/** BreadcrumbList: Home → (optional current page). */
+function breadcrumbNode(origin: string, crumb?: { name: string; url: string }): Record<string, unknown> {
+  const items: Record<string, unknown>[] = [
+    { '@type': 'ListItem', position: 1, name: 'Home', item: `${origin}/` },
+  ]
+  if (crumb) items.push({ '@type': 'ListItem', position: 2, name: crumb.name, item: crumb.url })
+  return { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: items }
+}
+
 /** Look up per-route data and build the meta, or null if the route/row is unknown. */
 async function buildMeta(url: URL): Promise<Meta | null> {
   const origin = url.origin
@@ -103,17 +121,52 @@ async function buildMeta(url: URL): Promise<Meta | null> {
   const postMatch = path.match(/^\/post\/([^/]+)\/?$/)
   if (postMatch) {
     const id = decodeURIComponent(postMatch[1])
+    // author embed names its FK: poll_votes added a second posts<->profiles
+    // path, so a bare profiles embed is ambiguous (PGRST201).
     const rows = await restGet(
-      `posts?id=eq.${encodeURIComponent(id)}&select=id,title,body,media&limit=1`,
+      `posts?id=eq.${encodeURIComponent(id)}&select=id,title,body,media,created_at,vote_score,author:profiles!posts_author_id_fkey(username,display_name),comments(count)&limit=1`,
     )
     const post = rows?.[0]
     if (!post) return null
+    const author = (post.author ?? {}) as Row
+    const authorName = String(author.display_name || author.username || 'unknown')
+    const authorUrl = author.username ? `${origin}/user/${String(author.username)}` : undefined
+    const postUrl = `${origin}/post/${String(post.id)}`
+    const image = coverFromMedia(post.media) ?? defaultImage
+    const commentCount = Number((post.comments as Row[] | undefined)?.[0]?.count ?? 0)
     return {
       title: `${String(post.title)} — ${SITE}`,
       description: clip(post.body) || clip(COMMUNITY.blurb),
-      image: coverFromMedia(post.media) ?? defaultImage,
-      url: `${origin}/post/${String(post.id)}`,
+      image,
+      url: postUrl,
       type: 'article',
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'SocialMediaPosting',
+          '@id': postUrl,
+          url: postUrl,
+          headline: clip(post.title, 110),
+          description: clip(post.body) || clip(COMMUNITY.blurb),
+          image,
+          datePublished: String(post.created_at ?? ''),
+          author: { '@type': 'Person', name: authorName, ...(authorUrl ? { url: authorUrl } : {}) },
+          isPartOf: websiteNode(origin),
+          interactionStatistic: [
+            {
+              '@type': 'InteractionCounter',
+              interactionType: 'https://schema.org/LikeAction',
+              userInteractionCount: Math.max(0, Number(post.vote_score ?? 0)),
+            },
+            {
+              '@type': 'InteractionCounter',
+              interactionType: 'https://schema.org/CommentAction',
+              userInteractionCount: Math.max(0, commentCount),
+            },
+          ],
+        },
+        breadcrumbNode(origin, { name: clip(post.title, 60), url: postUrl }),
+      ],
     }
   }
 
@@ -121,17 +174,38 @@ async function buildMeta(url: URL): Promise<Meta | null> {
   if (userMatch) {
     const username = decodeURIComponent(userMatch[1])
     const rows = await restGet(
-      `profiles?username=eq.${encodeURIComponent(username)}&select=username,display_name,banner,avatar_url&limit=1`,
+      `profiles?username=eq.${encodeURIComponent(username)}&select=username,display_name,banner,avatar_url,created_at&limit=1`,
     )
     const p = rows?.[0]
     if (!p) return null
     const display = String(p.display_name || p.username)
+    const profileUrl = `${origin}/user/${String(p.username)}`
+    const avatar = (typeof p.avatar_url === 'string' && p.avatar_url) || defaultImage
     return {
       title: `${display} (@${String(p.username)}) — ${SITE}`,
       description: clip(p.banner) || `${display} on ${SITE}.`,
-      image: (typeof p.avatar_url === 'string' && p.avatar_url) || defaultImage,
-      url: `${origin}/user/${String(p.username)}`,
+      image: avatar,
+      url: profileUrl,
       type: 'profile',
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'ProfilePage',
+          '@id': profileUrl,
+          url: profileUrl,
+          dateCreated: String(p.created_at ?? ''),
+          isPartOf: websiteNode(origin),
+          mainEntity: {
+            '@type': 'Person',
+            name: display,
+            alternateName: `@${String(p.username)}`,
+            description: clip(p.banner) || undefined,
+            image: avatar,
+            url: profileUrl,
+          },
+        },
+        breadcrumbNode(origin, { name: display, url: profileUrl }),
+      ],
     }
   }
 
@@ -142,10 +216,37 @@ async function buildMeta(url: URL): Promise<Meta | null> {
       image: defaultImage,
       url: `${origin}/`,
       type: 'website',
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          ...websiteNode(origin),
+          description: clip(COMMUNITY.blurb),
+          potentialAction: {
+            '@type': 'SearchAction',
+            target: { '@type': 'EntryPoint', urlTemplate: `${origin}/search?q={search_term_string}` },
+            'query-input': 'required name=search_term_string',
+          },
+        },
+        {
+          '@context': 'https://schema.org',
+          '@type': 'Organization',
+          name: SITE,
+          url: `${origin}/`,
+          logo: defaultImage,
+        },
+      ],
     }
   }
 
   return null
+}
+
+/** Serialize JSON-LD for embedding in HTML: escape `<` so post/profile text
+ *  can never break out of the <script> element. */
+function jsonLdScripts(objs: Record<string, unknown>[]): string {
+  return objs
+    .map((o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`)
+    .join('\n')
 }
 
 function renderHtml(m: Meta): string {
@@ -170,6 +271,7 @@ function renderHtml(m: Meta): string {
 <meta name="twitter:title" content="${title}" />
 <meta name="twitter:description" content="${desc}" />
 <meta name="twitter:image" content="${image}" />
+${jsonLdScripts(m.jsonLd)}
 </head>
 <body></body>
 </html>
