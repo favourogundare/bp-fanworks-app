@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -153,6 +153,21 @@ function useSaved(targetType: "post" | "comment", targetId: string): [boolean, (
     toggleSaved(targetType, targetId, next).catch((e) => { console.error("save failed", e); setSaved(!next); });
   };
   return [saved, toggle];
+}
+
+function usePostFollow(postId: string): [boolean, () => void] {
+  const [followed, setFollowed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    getMyPostFollow(postId).then((v) => { if (active) setFollowed(v); });
+    return () => { active = false; };
+  }, [postId]);
+  const toggle = () => {
+    const next = !followed;
+    setFollowed(next); // optimistic
+    togglePostFollow(postId, next).catch((e) => { console.error("post follow failed", e); setFollowed(!next); });
+  };
+  return [followed, toggle];
 }
 
 // Copy a shareable link to a post (now that posts have real URLs).
@@ -350,7 +365,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
 
 // ----- Post card -----
 function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged }: any) {
-  const [followed, setFollowed] = useState(false);
+  const [followed, toggleFollowed] = usePostFollow(post.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(post.title);
@@ -435,7 +450,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <Vote votes={post.votes} t={t} targetType="post" targetId={post.id} />
         <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} onClick={() => onOpen(post)} />
-        <ActionPill icon={followed ? <BellOff size={15} /> : <Bell size={15} />} label={followed ? "Following" : "Follow"} t={t} onClick={() => setFollowed(!followed)} />
+        <ActionPill icon={followed ? <BellOff size={15} /> : <Bell size={15} />} label={followed ? "Following" : "Follow"} t={t} onClick={toggleFollowed} />
         <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
         <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
       </div>
