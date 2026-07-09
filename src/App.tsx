@@ -263,6 +263,7 @@ function MediaBlock({ post, t }: any) {
 function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }: any) {
   const [val, setVal] = useState("");
   const [busy, setBusy] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const submit = async () => {
     const body = val.trim();
     if (!body) return;
@@ -273,7 +274,8 @@ function CommentComposer({ t, postId, parentId, onAdded, placeholder, onCancel }
   };
   return (
     <div style={{ marginTop: 8 }}>
-      <textarea value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder || "Add a comment…"} rows={3}
+      <FmtToolbar taRef={taRef} value={val} onChange={setVal} t={t} />
+      <textarea ref={taRef} value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder || "Add a comment…"} rows={3}
         style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
         <span style={{ color: t.muted, fontSize: 11, marginRight: "auto" }}>{val.includes(">!") ? "Spoiler markup active" : "Tip: >!text!< hides a spoiler"}</span>
@@ -299,11 +301,151 @@ function Spoiler({ text, t }: any) {
   );
 }
 
-function renderSpoilers(body: string, t: any) {
-  const parts = body.split(/>!(.+?)!</gs);
-  if (parts.length === 1) return body;
-  // split with a capture group alternates: [plain, spoiler, plain, spoiler, ...]
-  return parts.map((seg, i) => (i % 2 === 1 ? <Spoiler key={i} text={seg} t={t} /> : seg));
+// Single client-side renderer for post & comment bodies. Extends the original
+// spoiler-only parser into a small, dependency-free markdown subset that matches
+// exactly what the formatting toolbar emits. Everything is built as React
+// elements (auto-escaped) — never dangerouslySetInnerHTML — so no sanitizer is
+// needed and stored bodies stay plain text in the same `body` column.
+const CODE_FONT = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+
+function codeInlineStyle(t: any): React.CSSProperties {
+  return { background: t.pill, color: t.text, borderRadius: 4, padding: "1px 5px", fontFamily: CODE_FONT, fontSize: "0.9em" };
+}
+
+// Inline spans: **bold**, *italic*, `code`, [text](url) and >!spoiler!<.
+// Bold is matched before italic; code and links are captured whole so their
+// inner text is not re-parsed as markdown.
+function renderInlineRich(text: string, t: any, kp: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  const re = /(\*\*(?:[^*]|\*(?!\*))+\*\*)|(\*[^*\n]+\*)|(`[^`\n]+`)|(>!.+?!<)|(\[[^\]]+\]\((?:https?:\/\/|mailto:|\/)[^)\s]+\))/g;
+  let last = 0, i = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (m[1]) out.push(<strong key={`${kp}-${i}`}>{renderInlineRich(tok.slice(2, -2), t, `${kp}-${i}b`)}</strong>);
+    else if (m[2]) out.push(<em key={`${kp}-${i}`}>{renderInlineRich(tok.slice(1, -1), t, `${kp}-${i}i`)}</em>);
+    else if (m[3]) out.push(<code key={`${kp}-${i}`} style={codeInlineStyle(t)}>{tok.slice(1, -1)}</code>);
+    else if (m[4]) out.push(<Spoiler key={`${kp}-${i}`} text={tok.slice(2, -2)} t={t} />);
+    else { const mm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)!; out.push(<a key={`${kp}-${i}`} href={mm[2]} target="_blank" rel="noopener noreferrer" style={{ color: t.link, textDecoration: "underline" }}>{mm[1]}</a>); }
+    last = re.lastIndex; i++;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+// Inline text that may span several soft lines — newlines render as <br/> to
+// preserve the old pre-wrap feel (a single newline is a visible line break).
+function renderInlineLines(text: string, t: any, kp: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  text.split("\n").forEach((ln, j) => {
+    if (j > 0) out.push(<br key={`${kp}-br${j}`} />);
+    out.push(...renderInlineRich(ln, t, `${kp}-${j}`));
+  });
+  return out;
+}
+
+const isBlockStart = (l: string) => /^```/.test(l.trim()) || /^#{1,3}\s+/.test(l) || /^>(?!!)\s?/.test(l) || /^\s*[-*]\s+/.test(l) || /^\s*\d+\.\s+/.test(l);
+
+function renderRichText(body: string, t: any): React.ReactNode {
+  if (!body) return null;
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let i = 0, k = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // fenced code block ``` ... ```
+    if (/^```/.test(line.trim())) {
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++; // consume closing fence (if present)
+      blocks.push(<pre key={k++} style={{ background: t.pill, borderRadius: 8, padding: "10px 12px", overflowX: "auto", margin: "0 0 10px", fontFamily: CODE_FONT, fontSize: 13, lineHeight: 1.5, color: t.text }}>{buf.join("\n")}</pre>);
+      continue;
+    }
+    // headings # / ## / ###
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (h) {
+      const size = h[1].length === 1 ? 22 : h[1].length === 2 ? 19 : 16;
+      blocks.push(<div key={k++} style={{ fontWeight: 800, fontSize: size, color: t.text, margin: "12px 0 8px", lineHeight: 1.3 }}>{renderInlineRich(h[2], t, `h${k}`)}</div>);
+      i++; continue;
+    }
+    // blockquote (> ...), excluding the >! spoiler marker
+    if (/^>(?!!)\s?/.test(line)) {
+      const buf: string[] = [];
+      while (i < lines.length && /^>(?!!)\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>(?!!)\s?/, "")); i++; }
+      blocks.push(<blockquote key={k++} style={{ borderLeft: `3px solid ${t.border}`, margin: "0 0 10px", padding: "2px 0 2px 12px", color: t.muted }}>{renderInlineLines(buf.join("\n"), t, `q${k}`)}</blockquote>);
+      continue;
+    }
+    // unordered list (- or *)
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*]\s+/, "")); i++; }
+      blocks.push(<ul key={k++} style={{ margin: "0 0 10px", paddingLeft: 22, lineHeight: 1.6 }}>{items.map((it, j) => <li key={j}>{renderInlineRich(it, t, `ul${k}-${j}`)}</li>)}</ul>);
+      continue;
+    }
+    // ordered list (1. 2. ...)
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+\.\s+/, "")); i++; }
+      blocks.push(<ol key={k++} style={{ margin: "0 0 10px", paddingLeft: 24, lineHeight: 1.6 }}>{items.map((it, j) => <li key={j}>{renderInlineRich(it, t, `ol${k}-${j}`)}</li>)}</ol>);
+      continue;
+    }
+    // blank line — paragraph separator
+    if (line.trim() === "") { i++; continue; }
+    // paragraph — gather until a blank line or the next block starter
+    const buf: string[] = [];
+    while (i < lines.length && lines[i].trim() !== "" && !isBlockStart(lines[i])) { buf.push(lines[i]); i++; }
+    blocks.push(<p key={k++} style={{ margin: "0 0 10px", lineHeight: 1.6 }}>{renderInlineLines(buf.join("\n"), t, `p${k}`)}</p>);
+  }
+  return <>{blocks}</>;
+}
+
+// Formatting toolbar: wraps/inserts the exact markdown syntax renderRichText
+// parses. Operates on the shared textarea through a ref — no new state, no
+// storage change; the output is just the markdown text the renderer understands.
+function FmtToolbar({ taRef, value, onChange, t }: any) {
+  const wrap = (before: string, after: string, placeholder: string) => {
+    const ta = taRef.current; if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const sel = value.slice(s, e) || placeholder;
+    onChange(value.slice(0, s) + before + sel + after + value.slice(e));
+    const start = s + before.length;
+    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(start, start + sel.length); });
+  };
+  const linePrefix = (prefix: string) => {
+    const ta = taRef.current; if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const from = value.lastIndexOf("\n", s - 1) + 1;
+    const nl = value.indexOf("\n", e);
+    const to = nl === -1 ? value.length : nl;
+    const prefixed = value.slice(from, to).split("\n").map((l: string) => prefix + l).join("\n");
+    onChange(value.slice(0, from) + prefixed + value.slice(to));
+    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(from, from + prefixed.length); });
+  };
+  const link = () => {
+    const ta = taRef.current; if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const sel = value.slice(s, e) || "text";
+    const insert = `[${sel}](url)`;
+    onChange(value.slice(0, s) + insert + value.slice(e));
+    const urlStart = s + insert.length - 4; // select the "url" placeholder
+    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(urlStart, urlStart + 3); });
+  };
+  const btn = (label: React.ReactNode, title: string, onClick: () => void) => (
+    <button type="button" title={title} aria-label={title} onMouseDown={(ev) => ev.preventDefault()} onClick={onClick}
+      style={{ background: t.pill, color: t.pillText, border: `1px solid ${t.border}`, borderRadius: 6, minWidth: 28, height: 28, padding: "0 8px", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}>{label}</button>
+  );
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+      {btn(<b>B</b>, "Bold", () => wrap("**", "**", "bold text"))}
+      {btn(<i>I</i>, "Italic", () => wrap("*", "*", "italic text"))}
+      {btn("H", "Heading", () => linePrefix("## "))}
+      {btn(<Link2 size={14} />, "Link", link)}
+      {btn(<span>&bull;</span>, "Bulleted list", () => linePrefix("- "))}
+      {btn(<span>&ldquo;</span>, "Quote", () => linePrefix("> "))}
+      {btn(<span style={{ fontFamily: CODE_FONT }}>{"</>"}</span>, "Inline code", () => wrap("`", "`", "code"))}
+    </div>
+  );
 }
 
 // Collapse state survives comment-tree refetches (reply/edit reload remounts the
@@ -379,7 +521,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
               </div>
             </div>
           ) : (
-            <p style={{ fontSize: 14, color: c.deleted ? t.muted : t.text, fontStyle: c.deleted ? "italic" : "normal", whiteSpace: "pre-wrap", margin: "6px 0", lineHeight: 1.55 }}>{c.deleted ? c.body : renderSpoilers(c.body, t)}</p>
+            <div style={{ fontSize: 14, color: c.deleted ? t.muted : t.text, fontStyle: c.deleted ? "italic" : "normal", margin: "6px 0", lineHeight: 1.55 }}>{c.deleted ? c.body : renderRichText(c.body, t)}</div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
@@ -604,6 +746,7 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
   const [customWarning, setCustomWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const toggleFlair = (k: string) => setFlairs((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
   const toggleWarning = (w: string) => setWarnings((prev) => prev.includes(w) ? prev.filter((x) => x !== w) : [...prev, w]);
@@ -685,7 +828,8 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
             ))}
           </div>
         )}
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={4} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical" }} />
+        <FmtToolbar taRef={bodyRef} value={body} onChange={setBody} t={t} />
+        <textarea ref={bodyRef} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={4} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
         {error && <div style={{ color: "#e0726b", fontSize: 13, marginTop: 8 }}>{error}</div>}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
           <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
@@ -1004,6 +1148,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   const [body, setBody] = useState(post.body);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [reading, setReading] = useState(false); // distraction-reduced view, in-memory only
   const mine = !!myUsername && post.author === myUsername;
   const hoverHandlers = useUsernameHoverCard(post.author);
 
@@ -1022,7 +1167,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   };
 
   return (
-    <div style={contentGrid(bp)}>
+    <div style={reading ? { maxWidth: 760, margin: "0 auto", padding: "0 16px" } : contentGrid(bp)}>
       <div style={{ paddingTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <button onClick={onBack} style={{ background: t.panel2, border: "none", borderRadius: "50%", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><ArrowLeft size={18} /></button>
@@ -1058,7 +1203,9 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         <ContentWarningGate warnings={post.warnings} t={t}>
-          {post.body && <p style={{ color: t.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{post.body}</p>}
+          {post.body && <div style={reading
+            ? { color: t.text, fontSize: 18, lineHeight: 1.85, maxWidth: 680, margin: "0 auto", fontFamily: "Georgia, 'Times New Roman', serif" }
+            : { color: t.text, fontSize: 15 }}>{renderRichText(post.body, t)}</div>}
           {post.type === "poll" && <PollBlock post={post} t={t} />}
           {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
           <MediaBlock post={post} t={t} />
@@ -1070,13 +1217,14 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
           <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} />
           <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
           <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
+          <ActionPill icon={<BookOpen size={15} />} label={reading ? "Exit reading" : "Reading mode"} t={t} onClick={() => setReading((r) => !r)} />
         </div>
         <CollectionTagger t={t} postId={post.id} />
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
         <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />
       </div>
-      <div><CommunitySidebar t={t} /></div>
+      {!reading && <div><CommunitySidebar t={t} /></div>}
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
   );
