@@ -299,11 +299,79 @@ function Spoiler({ text, t }: any) {
   );
 }
 
+// Inline fanart embeds (client-side only — no metadata fetching, no backend).
+// We only turn a URL into an <img> when it's an https link to a KNOWN reputable
+// image/fanart host AND ends in an image extension. Allowlist-first avoids
+// tracking-pixel / content-safety risks from rendering arbitrary URLs as images.
+// Anything not matched stays a normal clickable link.
+const IMAGE_HOST_ALLOWLIST = new Set([
+  "i.imgur.com", "imgur.com",
+  "cdn.discordapp.com", "media.discordapp.net",
+  "i.redd.it", "preview.redd.it",
+  "pbs.twimg.com",
+  "raw.githubusercontent.com", "user-images.githubusercontent.com",
+]);
+// Suffix matches for hosts that shard across many subdomains.
+const IMAGE_HOST_SUFFIXES = [
+  ".media.tumblr.com",   // Tumblr media (e.g. 64.media.tumblr.com)
+  ".artstation.com",     // ArtStation CDNs (cdna./cdnb.)
+  ".wixmp.com",          // DeviantArt-served images
+];
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif)$/i;
+
+function isAllowlistedImageUrl(raw: string): boolean {
+  let u: URL;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  const okHost = IMAGE_HOST_ALLOWLIST.has(host) || IMAGE_HOST_SUFFIXES.some((s) => host.endsWith(s));
+  return okHost && IMAGE_EXT_RE.test(u.pathname);
+}
+
+// A comment URL rendered as a plain, safe, clickable link.
+function CommentLink({ href, t }: { href: string; t: any }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer nofollow"
+      style={{ color: t.accent, textDecoration: "underline", wordBreak: "break-word" }}>{href}</a>
+  );
+}
+
+// Allowlisted image URL rendered inline. Lazy-loaded, capped so it can't blow
+// out the layout; if it fails to load it degrades to the plain link.
+function InlineImage({ src, t }: { src: string; t: any }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <CommentLink href={src} t={t} />;
+  return (
+    <img src={src} alt="Shared image" loading="lazy" onError={() => setFailed(true)}
+      style={{ display: "block", maxWidth: "100%", maxHeight: 360, borderRadius: 12, border: `1px solid ${t.border}`, margin: "6px 0", objectFit: "contain" }} />
+  );
+}
+
+// Turn a plain text segment into nodes: allowlisted image URLs -> inline images,
+// other https URLs -> clickable links, everything else stays text.
+function renderText(text: string, t: any, keyPrefix: string) {
+  const parts = text.split(/(https:\/\/[^\s<]+)/g);
+  const out: React.ReactNode[] = [];
+  parts.forEach((part, i) => {
+    if (i % 2 === 0) { if (part) out.push(part); return; }
+    // Don't swallow trailing sentence punctuation into the URL.
+    const trail = part.match(/[.,;:!?)\]}'"]+$/)?.[0] ?? "";
+    const url = trail ? part.slice(0, part.length - trail.length) : part;
+    out.push(isAllowlistedImageUrl(url)
+      ? <InlineImage key={`${keyPrefix}-${i}`} src={url} t={t} />
+      : <CommentLink key={`${keyPrefix}-${i}`} href={url} t={t} />);
+    if (trail) out.push(trail);
+  });
+  return out;
+}
+
 function renderSpoilers(body: string, t: any) {
   const parts = body.split(/>!(.+?)!</gs);
-  if (parts.length === 1) return body;
   // split with a capture group alternates: [plain, spoiler, plain, spoiler, ...]
-  return parts.map((seg, i) => (i % 2 === 1 ? <Spoiler key={i} text={seg} t={t} /> : seg));
+  // Even segments are plain text (URLs -> images/links); odd are spoiler bodies.
+  return parts.map((seg, i) => (i % 2 === 1
+    ? <Spoiler key={i} text={seg} t={t} />
+    : <React.Fragment key={i}>{renderText(seg, t, `s${i}`)}</React.Fragment>));
 }
 
 // Collapse state survives comment-tree refetches (reply/edit reload remounts the
