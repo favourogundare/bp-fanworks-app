@@ -254,13 +254,38 @@ export async function castPollVote(postId: string, optionIdx: number): Promise<v
   if (error) throw error
 }
 
-/** Live community stats for the sidebar: total members and contribution posts. */
+/** Live community stats for the sidebar: joined members and contribution posts. */
 export async function fetchCommunityStats(): Promise<{ members: number; contributions: number }> {
   const [membersRes, contribRes] = await Promise.all([
-    supabase.from('profiles').select('id', { count: 'exact', head: true }),
+    supabase.from('community_members').select('member_id', { count: 'exact', head: true }),
     supabase.from('posts').select('id', { count: 'exact', head: true }).eq('surface', 'community'),
   ])
   return { members: membersRes.count ?? 0, contributions: contribRes.count ?? 0 }
+}
+
+// ----- community membership -----
+
+/** Whether the signed-in member has joined the community. */
+export async function fetchMyMembership(): Promise<boolean> {
+  const me = await getMyProfileId()
+  if (!me) return false
+  const { data } = await supabase.from('community_members').select('member_id').eq('member_id', me).maybeSingle()
+  return !!data
+}
+
+/** Join (on=true) or leave the community. */
+export async function setMembership(on: boolean): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  if (on) {
+    const { error } = await supabase
+      .from('community_members')
+      .upsert({ member_id: me }, { onConflict: 'member_id' })
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from('community_members').delete().eq('member_id', me)
+    if (error) throw error
+  }
 }
 
 export type FeedSort = 'hot' | 'top' | 'new'
@@ -907,7 +932,7 @@ export async function fetchHiddenUsernames(): Promise<string[]> {
 
 // Fields shared by the full profile-page fetch and the lightweight hover-card
 // preview fetch below.
-const PROFILE_CORE_FIELDS = 'id, username, display_name, role, created_at, member_flair:flairs(label)'
+const PROFILE_CORE_FIELDS = 'id, username, display_name, role, created_at, member_flair:flairs(slug, label)'
 
 function mapProfileCore(p: Row): UiUserPreview {
   return {
@@ -958,6 +983,14 @@ export async function updateMyProfile(fields: {
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
   const { error } = await supabase.from('profiles').update(fields).eq('id', me)
+  if (error) throw error
+}
+
+/** Set (or clear, with null) the signed-in member's own member flair by slug.
+ *  Goes through the set_my_member_flair RPC (0020) so the slug is resolved
+ *  within scope='member' and only the caller's row is touched. */
+export async function setMyMemberFlair(slug: string | null): Promise<void> {
+  const { error } = await supabase.rpc('set_my_member_flair', { p_slug: slug })
   if (error) throw error
 }
 
@@ -1013,6 +1046,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
 
   return {
     ...mapProfileCore(p),
+    flairSlug: (p.member_flair as Row | null)?.slug ?? null,
     banner: p.banner || '',
     avatarUrl: p.avatar_url ?? null,
     ao3: p.ao3_url ?? null,
