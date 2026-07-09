@@ -4,6 +4,8 @@ The feature backlog for the site. Features are grouped by **theme**; within each
 
 > The site is in active development. This is the working plan, not a commitment to build everything.
 
+> 📦 For what's **already shipped to production**, see [IMPLEMENTED_FEATURES.md](IMPLEMENTED_FEATURES.md).
+
 ## How to read this
 
 **Effort legend** (build effort, assuming Claude Code does the build and you review + run migrations):
