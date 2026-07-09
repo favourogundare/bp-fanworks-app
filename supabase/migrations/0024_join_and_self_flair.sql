@@ -15,7 +15,7 @@
 -- One row per member of the (single) community. Public-readable so the member
 -- count / roster reads match world-readable profiles; writable only by the
 -- member themselves, mirroring the votes / tag_follows own-row pattern.
-create table community_members (
+create table if not exists community_members (
   member_id uuid not null references profiles(id) on delete cascade,
   joined_at timestamptz not null default now(),
   primary key (member_id)
@@ -23,7 +23,9 @@ create table community_members (
 
 alter table community_members enable row level security;
 
+drop policy if exists community_members_select on community_members;
 create policy community_members_select    on community_members for select using (true);
+drop policy if exists community_members_write_own on community_members;
 create policy community_members_write_own on community_members for all
   using      (member_id = current_profile_id())
   with check (member_id = current_profile_id());
