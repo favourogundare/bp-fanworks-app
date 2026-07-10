@@ -19,7 +19,7 @@ import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned } from "./lib/mod";
 import type { UiModAction, UiReport, ReportTargetPreview } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
@@ -195,7 +195,7 @@ function ConfirmDialog({ t, title, message, confirmLabel = "Delete", onConfirm, 
         <p style={{ color: t.muted, fontSize: 14, lineHeight: 1.5, margin: "0 0 16px" }}>{message}</p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button onClick={onClose} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
-          <button onClick={onConfirm} disabled={busy} style={{ background: "#e0726b", color: "#1a0b0b", border: "none", borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13, opacity: busy ? 0.6 : 1 }}>{busy ? "Deleting…" : confirmLabel}</button>
+          <button onClick={onConfirm} disabled={busy} style={{ background: "#e0726b", color: "#1a0b0b", border: "none", borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13, opacity: busy ? 0.6 : 1 }}>{busy ? "Working…" : confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -1296,6 +1296,8 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
   const [editing, setEditing] = useState(false);
+  const [modConfirm, setModConfirm] = useState<null | "promote" | "demote" | "ban" | "unban">(null);
+  const [modBusy, setModBusy] = useState(false);
 
   // Load the real relationship state whenever we view a different profile.
   useEffect(() => {
@@ -1369,13 +1371,35 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
         {isMod && (
           <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 10, marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.heading, fontSize: 12, fontWeight: 800 }}><Shield size={13} /> MOD</span>
+            {profile.banned && <span style={{ fontSize: 11, fontWeight: 800, color: "#e0726b", border: "1px solid #e0726b", borderRadius: 999, padding: "2px 9px", textTransform: "uppercase" }}>Banned</span>}
             <span style={{ color: t.muted, fontSize: 12 }}>Member flair:</span>
             <select defaultValue="" onChange={(e) => { modAssignMemberFlair(profile.id, e.target.value || null).then(() => onProfileChanged?.()).catch((err) => console.error("assign flair failed", err)); }}
               style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "5px 8px", fontSize: 13 }}>
               <option value="">— assign flair —</option>
               {MEMBER_FLAIRS.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
             </select>
+            {!isMe && !profile.banned && <button onClick={() => setModConfirm(profile.isMod ? "demote" : "promote")} style={modBtn(t)}>{profile.isMod ? "Remove mod" : "Make mod"}</button>}
+            {!isMe && !profile.isMod && <button onClick={() => setModConfirm(profile.banned ? "unban" : "ban")} style={{ ...modBtn(t), color: profile.banned ? undefined : "#e0726b" }}>{profile.banned ? "Unban" : "Ban"}</button>}
           </div>
+        )}
+        {modConfirm && (
+          <ConfirmDialog t={t} busy={modBusy}
+            title={{ promote: `Make ${profile.username} a mod?`, demote: `Remove ${profile.username} as mod?`, ban: `Ban ${profile.username}?`, unban: `Unban ${profile.username}?` }[modConfirm]}
+            message={{ promote: "They get the full mod toolkit: remove content, lock comments, manage flairs, bans, and the report queue.",
+                       demote: "They go back to a regular member. Their past mod actions stay in the log.",
+                       ban: "They can no longer post or comment (enforced by the database). Their existing content stays up — remove it separately if needed.",
+                       unban: "They can post and comment again." }[modConfirm]}
+            confirmLabel={{ promote: "Make mod", demote: "Remove mod", ban: "Ban", unban: "Unban" }[modConfirm]}
+            onClose={() => setModConfirm(null)}
+            onConfirm={async () => {
+              setModBusy(true);
+              try {
+                if (modConfirm === "promote" || modConfirm === "demote") await modSetRole(profile.id, modConfirm === "promote");
+                else await modSetBanned(profile.id, modConfirm === "ban");
+                onProfileChanged?.();
+              } catch (e) { console.error("mod action failed", e); }
+              finally { setModBusy(false); setModConfirm(null); }
+            }} />
         )}
         <MemberCollections t={t} username={profile.username} />
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
@@ -1691,6 +1715,7 @@ function ModLogRoute() {
     lock_comments: "locked comments", unlock_comments: "unlocked comments",
     set_post_flairs: "re-flaired a post", assign_member_flair: "assigned member flair",
     remove_comment: "removed a comment", resolve_report: "resolved a report", dismiss_report: "dismissed a report",
+    promote_mod: "promoted a member to mod", demote_mod: "removed a mod", ban_member: "banned a member", unban_member: "unbanned a member",
   };
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>

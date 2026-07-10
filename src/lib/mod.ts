@@ -121,6 +121,18 @@ export async function modSetPostFlairs(postId: string, slugs: string[]): Promise
   if (error) throw error
 }
 
+/** Promote a member to mod, or demote a mod (the DB refuses to demote the last mod). */
+export async function modSetRole(profileId: string, mod: boolean): Promise<void> {
+  const { error } = await supabase.rpc('mod_set_role', { p_profile: profileId, p_mod: mod })
+  if (error) throw error
+}
+
+/** Ban or unban a member (the DB refuses to ban a mod). Banned members can't post or comment. */
+export async function modSetBanned(profileId: string, banned: boolean, reason = ''): Promise<void> {
+  const { error } = await supabase.rpc('mod_set_banned', { p_profile: profileId, p_banned: banned, p_reason: reason })
+  if (error) throw error
+}
+
 export async function modAssignMemberFlair(profileId: string, slug: string | null): Promise<void> {
   const { error } = await supabase.rpc('mod_assign_member_flair', { p_profile: profileId, p_slug: slug })
   if (error) throw error

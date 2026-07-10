@@ -52,6 +52,7 @@ export interface UiUserPreview {
 }
 
 export interface UiProfile extends UiUserPreview {
+  banned: boolean // banned from the community (mods see a chip; DB blocks their posts/comments)
   banner: string
   avatarUrl: string | null
   ao3: string | null // AO3 profile link
