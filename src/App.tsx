@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, submitReport } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
@@ -19,8 +19,8 @@ import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog } from "./lib/mod";
-import type { UiModAction } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets } from "./lib/mod";
+import type { UiModAction, UiReport, ReportTargetPreview } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
 import { goldPair, neutralPair } from "./lib/palettes";
@@ -202,6 +202,53 @@ function ConfirmDialog({ t, title, message, confirmLabel = "Delete", onConfirm, 
   );
 }
 
+// ----- Reporting content (feeds the mod report queue, MILESTONES §9) -----
+const REPORT_REASONS = ["Spam", "Harassment", "Breaks community rules", "Spoilers without warning", "Other"];
+
+function ReportDialog({ t, targetType, targetId, onClose }: any) {
+  const [reason, setReason] = useState<string>(REPORT_REASONS[0]);
+  const [detail, setDetail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    try {
+      await submitReport(targetType, targetId, detail.trim() ? `${reason}: ${detail.trim()}` : reason);
+      setDone(true);
+      setTimeout(onClose, 1200);
+    } catch (e) {
+      console.error("report failed", e);
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={busy ? undefined : onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, width: 420, maxWidth: "100%", padding: 20 }}>
+        <h3 style={{ color: t.text, margin: "0 0 4px", fontSize: 16, fontWeight: 800 }}>Report this {targetType}</h3>
+        {done ? (
+          <p style={{ color: t.muted, fontSize: 14, margin: "12px 0 4px" }}>Thanks — the mods will take a look.</p>
+        ) : (
+          <>
+            <p style={{ color: t.muted, fontSize: 13, lineHeight: 1.5, margin: "0 0 12px" }}>Reports go to the moderators. The author won't know who reported.</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {REPORT_REASONS.map((r) => (
+                <span key={r} onClick={() => setReason(r)} style={{ cursor: "pointer", fontSize: 12, fontWeight: 700, padding: "5px 11px", borderRadius: 999,
+                  border: `1px solid ${reason === r ? t.accent : t.border}`, color: reason === r ? t.accent : t.muted }}>{r}</span>
+              ))}
+            </div>
+            <input value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="Anything the mods should know? (optional)" maxLength={400}
+              style={{ width: "100%", boxSizing: "border-box", background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", marginBottom: 14 }} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={onClose} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
+              <button onClick={send} disabled={busy} style={{ background: t.accent, color: "#1a1205", border: "none", borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13, opacity: busy ? 0.6 : 1 }}>{busy ? "Reporting…" : "Report"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Themed member flairs (must match the slugs seeded in migration 0001).
 const MEMBER_FLAIRS = [
   { slug: "dora-milaje", label: "Dora Milaje" },
@@ -314,6 +361,7 @@ const countReplies = (c: any): number => (c.replies ?? []).reduce((n: number, r:
 
 function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locked }: any) {
   const [collapsed, setCollapsed] = useState(collapsedComments.has(c.id));
+  const [reporting, setReporting] = useState(false);
   const toggleCollapsed = () => {
     const next = !collapsed;
     setCollapsed(next);
@@ -390,12 +438,14 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locke
             {mine && <span onClick={() => setConfirming(true)} style={{ cursor: busy ? "default" : "pointer", color: "#e0726b", opacity: busy ? 0.6 : 1 }}>Delete</span>}
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
             <span onClick={copyCommentLink} title="Copy a direct link to this comment" style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: linkCopied ? t.accent : undefined }}><Share2 size={14} /> {linkCopied ? "Link copied!" : "Share"}</span>
+            {!mine && !!myUsername && !c.deleted && <span onClick={() => setReporting(true)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Flag size={13} /> Report</span>}
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
           {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} />)}
         </div>
       )}
       {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Your comment will show as “[deleted]”. Replies to it stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+      {reporting && <ReportDialog t={t} targetType="comment" targetId={c.id} onClose={() => setReporting(false)} />}
     </div>
   );
 }
@@ -901,6 +951,7 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
       <button onClick={() => run(async () => { await modSetLocked(post.id, !post.locked); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Lock size={13} /> {post.locked ? "Unlock comments" : "Lock comments"}</button>
       <button onClick={() => setReflair(!reflair)} style={modBtn(t)}>Re-flair</button>
       <button onClick={() => setRemoving(!removing)} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      <button onClick={() => navigate("/mod/reports")} style={modBtn(t)}>Reports</button>
       <button onClick={() => navigate("/mod/log")} style={modBtn(t)}>Log</button>
       {removing && (
         <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
@@ -1018,6 +1069,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   const [body, setBody] = useState(post.body);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
   const hoverHandlers = useUsernameHoverCard(post.author);
 
@@ -1084,6 +1136,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
           <ActionPill icon={<MessageCircle size={15} />} label={post.commentCount ?? post.comments?.length ?? 0} t={t} />
           <ActionPill icon={<Bookmark size={15} fill={saved ? "currentColor" : "none"} />} label={saved ? "Saved" : "Save"} t={t} onClick={toggleSave} />
           <ActionPill icon={<Share2 size={15} />} label="Share" t={t} onClick={() => copyPostLink(post.id)} />
+          {!mine && !!myUsername && <ActionPill icon={<Flag size={15} />} label="Report" t={t} onClick={() => setReporting(true)} />}
         </div>
         <CollectionTagger t={t} postId={post.id} />
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
@@ -1098,6 +1151,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
       </div>
       <div><CommunitySidebar t={t} /></div>
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+      {reporting && <ReportDialog t={t} targetType="post" targetId={post.id} onClose={() => setReporting(false)} />}
     </div>
   );
 }
@@ -1636,6 +1690,7 @@ function ModLogRoute() {
     remove_post: "removed a post", pin_post: "pinned a post", unpin_post: "unpinned a post",
     lock_comments: "locked comments", unlock_comments: "unlocked comments",
     set_post_flairs: "re-flaired a post", assign_member_flair: "assigned member flair",
+    remove_comment: "removed a comment", resolve_report: "resolved a report", dismiss_report: "dismissed a report",
   };
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
@@ -1657,6 +1712,98 @@ function ModLogRoute() {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+// Mod-only report queue (/mod/reports): user flags, grouped per target, with
+// dismiss / remove-content actions. Every action lands in the mod log.
+function ModReportsRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const navigate = useNavigate();
+  const [view, setView] = useState<"open" | "closed">("open");
+  const [rows, setRows] = useState<UiReport[]>([]);
+  const [previews, setPreviews] = useState<Record<string, ReportTargetPreview>>({});
+  const [loading, setLoading] = useState(true);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<any>(null); // group awaiting remove-confirm
+  const load = () => {
+    setLoading(true);
+    fetchReports(view)
+      .then(async (rs) => { setRows(rs); setPreviews(await fetchReportTargets(rs)); })
+      .catch((e) => console.error("reports load failed", e))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { window.scrollTo(0, 0); setPageMeta({ title: `Reports — ${community.name}` }); }, []);
+  useEffect(load, [view]);
+  // RLS already hides rows from non-mods; this just avoids a confusing empty page.
+  if (!c.myIsMod) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Mods only.</div>;
+  const groups: any[] = [];
+  const byKey: Record<string, any> = {};
+  for (const r of rows) {
+    const k = `${r.targetType}:${r.targetId}`;
+    if (!byKey[k]) { byKey[k] = { key: k, targetType: r.targetType, targetId: r.targetId, reports: [] }; groups.push(byKey[k]); }
+    byKey[k].reports.push(r);
+  }
+  const act = async (g: any, fn: () => Promise<void>) => {
+    setBusyKey(g.key);
+    try { await fn(); load(); } catch (e) { console.error("report action failed", e); } finally { setBusyKey(null); setRemoving(null); }
+  };
+  const dismissAll = (g: any) => act(g, async () => { for (const r of g.reports) await modResolveReport(r.id, "dismissed"); });
+  const removeContent = (g: any) => act(g, async () => {
+    if (g.targetType === "post") await modRemovePost(g.targetId, "via report queue");
+    else await modRemoveComment(g.targetId, "via report queue");
+    for (const r of g.reports) await modResolveReport(r.id, "resolved");
+  });
+  const tabBtn = (v: "open" | "closed", label: string) => (
+    <button onClick={() => setView(v)} style={{ ...relBtn(t), padding: "5px 14px", fontSize: 12, outline: view === v ? `2px solid ${t.accent}` : "none" }}>{label}</button>
+  );
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ padding: "20px 0 4px", display: "flex", alignItems: "center", gap: 10 }}>
+        <Flag size={20} color={t.accent} />
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Report queue</h1>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>{tabBtn("open", "Open")}{tabBtn("closed", "Closed")}</div>
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : groups.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{view === "open" ? "Queue is clear. Nothing to review." : "No closed reports yet."}</div>
+      ) : (
+        groups.map((g) => {
+          const p = previews[g.key];
+          const busy = busyKey === g.key;
+          return (
+            <div key={g.key} style={{ border: `1px solid ${t.border}`, borderRadius: 12, padding: "12px 14px", margin: "12px 0" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: t.accent, textTransform: "uppercase" }}>{g.targetType}</span>
+                {p?.gone || !p?.link ? (
+                  <span style={{ color: t.muted, fontSize: 14, fontStyle: "italic" }}>{p?.text ? clip(p.text, 90) : "Content already removed."}</span>
+                ) : (
+                  <span onClick={() => navigate(p.link!)} style={{ color: t.text, fontSize: 14, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>{clip(p.text, 90)}</span>
+                )}
+                <span style={{ color: t.muted, fontSize: 12, marginLeft: "auto", flexShrink: 0 }}>{timeAgo(g.reports[0].when)} ago</span>
+              </div>
+              {g.reports.map((r: UiReport) => (
+                <div key={r.id} style={{ color: t.muted, fontSize: 13, marginTop: 6 }}>
+                  <span style={{ color: t.heading, fontWeight: 700 }}>{r.reporter}</span>: {r.reason || "(no reason)"}
+                  {view === "closed" && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: r.status === "resolved" ? "#7bc47f" : t.muted }}>{r.status}</span>}
+                </div>
+              ))}
+              {view === "open" && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  {!p?.gone && <button onClick={() => setRemoving(g)} disabled={busy} style={{ ...relBtn(t), padding: "5px 14px", fontSize: 12, color: "#e0726b" }}>Remove {g.targetType}</button>}
+                  <button onClick={() => dismissAll(g)} disabled={busy} style={{ ...relBtn(t), padding: "5px 14px", fontSize: 12 }}>{p?.gone ? "Close report" : "Dismiss"}</button>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+      {removing && <ConfirmDialog t={t} title={`Remove this ${removing.targetType}?`} confirmLabel="Remove"
+        message={removing.targetType === "post" ? "The post is deleted for everyone and the report is resolved." : "The comment shows as removed by moderators; replies stay. The report is resolved."}
+        onConfirm={() => removeContent(removing)} onClose={() => setRemoving(null)} busy={busyKey === removing.key} />}
     </div>
   );
 }
@@ -2000,6 +2147,7 @@ export default function AppRoutes() {
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
         <Route path="mod/log" element={<ModLogRoute />} />
+        <Route path="mod/reports" element={<ModReportsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
