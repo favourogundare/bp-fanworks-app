@@ -19,7 +19,7 @@ import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned, modSetCommentDistinguished, modSetCommentSticky } from "./lib/mod";
 import type { UiModAction, UiReport, ReportTargetPreview } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
@@ -359,7 +359,7 @@ function renderSpoilers(body: string, t: any) {
 const collapsedComments = new Set<string>();
 const countReplies = (c: any): number => (c.replies ?? []).reduce((n: number, r: any) => n + 1 + countReplies(r), 0);
 
-function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locked }: any) {
+function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locked, isMod }: any) {
   const [collapsed, setCollapsed] = useState(collapsedComments.has(c.id));
   const [reporting, setReporting] = useState(false);
   const toggleCollapsed = () => {
@@ -400,6 +400,12 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locke
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 1500);
   };
+  // Distinguish/sticky: run the RPC, then refetch the thread (sticky reorders it).
+  const runMod = async (fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    try { await fn(); onAdded?.(); } catch (e) { console.error("mod comment action failed", e); } finally { setBusy(false); }
+  };
   return (
     <div id={`comment-${c.id}`} style={{ marginTop: 14, paddingLeft: depth ? 16 : 0, borderLeft: depth ? `2px solid ${t.border}` : "none", marginLeft: depth ? 6 : 0, ...(isTarget ? { outline: `2px solid ${t.accent}`, outlineOffset: 4, borderRadius: 8 } : null) }}>
       <div onClick={toggleCollapsed} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }} title={collapsed ? "Expand thread" : "Collapse thread"}>
@@ -413,6 +419,8 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locke
           <span onClick={() => onAuthor?.(c.author)} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.text, cursor: "pointer" }}>{c.author}</span>
         )}
         {c.flair && <span style={{ background: t.link, color: t.bg, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4 }}>{c.flair}</span>}
+        {c.distinguished && <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#7bc47f", fontSize: 10, fontWeight: 800 }}><Shield size={11} /> MOD</span>}
+        {c.stickied && <span style={{ display: "flex", alignItems: "center", gap: 3, color: t.accent, fontSize: 10, fontWeight: 800 }}><Pin size={11} /> PINNED</span>}
         <span style={{ fontSize: 12, color: t.muted }}>· {c.when}</span>
         {collapsed && <span style={{ fontSize: 12, color: t.muted, fontStyle: "italic" }}>{hidden > 0 ? `· ${hidden} ${hidden === 1 ? "reply" : "replies"} hidden` : "· collapsed"}</span>}
       </div>
@@ -439,9 +447,19 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locke
             <span style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Gift size={14} /> Award</span>
             <span onClick={copyCommentLink} title="Copy a direct link to this comment" style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: linkCopied ? t.accent : undefined }}><Share2 size={14} /> {linkCopied ? "Link copied!" : "Share"}</span>
             {!mine && !!myUsername && !c.deleted && <span onClick={() => setReporting(true)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><Flag size={13} /> Report</span>}
+            {isMod && mine && !c.deleted && (
+              <span onClick={() => runMod(() => modSetCommentDistinguished(c.id, !c.distinguished))} style={{ cursor: busy ? "default" : "pointer", color: "#7bc47f", opacity: busy ? 0.6 : 1 }}>
+                {c.distinguished ? "Undistinguish" : "Distinguish"}
+              </span>
+            )}
+            {isMod && mine && !c.deleted && depth === 0 && (
+              <span onClick={() => runMod(() => modSetCommentSticky(c.id, !c.stickied))} style={{ cursor: busy ? "default" : "pointer", color: t.accent, opacity: busy ? 0.6 : 1 }}>
+                {c.stickied ? "Unsticky" : "Sticky"}
+              </span>
+            )}
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
-          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} />)}
+          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} isMod={isMod} />)}
         </div>
       )}
       {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Your comment will show as “[deleted]”. Replies to it stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
@@ -1021,7 +1039,7 @@ const COMMENT_BATCH = 25;
 // Top-level comments render in batches with a "load more" button. A
 // #comment-<id> permalink expands collapsed ancestors, force-includes its
 // batch, and scrolls the target into view.
-function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor, locked }: any) {
+function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor, locked, isMod }: any) {
   const targetId = window.location.hash.startsWith("#comment-") ? window.location.hash.slice("#comment-".length) : null;
   // Path from a top-level comment to the target (indices of ancestors), or null.
   const findPath = (c: any, id: string): any[] | null => {
@@ -1050,7 +1068,7 @@ function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor, locke
   const remaining = comments.length - visible.length;
   return (
     <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>
-      {visible.map((c: any) => <Comment key={c.id} c={c} t={t} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} />)}
+      {visible.map((c: any) => <Comment key={c.id} c={c} t={t} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} isMod={isMod} />)}
       {remaining > 0 && (
         <button onClick={() => setShown(shown + COMMENT_BATCH)} style={{ ...relBtn(t), marginTop: 14, width: "100%", padding: "9px 0" }}>
           Load {Math.min(remaining, COMMENT_BATCH)} more {remaining === 1 ? "comment" : "comments"} ({remaining} hidden)
@@ -1147,7 +1165,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         ) : (
           <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
         )}
-        <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} locked={post.locked && !isMod} />
+        <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} locked={post.locked && !isMod} isMod={isMod} />
       </div>
       <div><CommunitySidebar t={t} /></div>
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
@@ -1716,6 +1734,8 @@ function ModLogRoute() {
     set_post_flairs: "re-flaired a post", assign_member_flair: "assigned member flair",
     remove_comment: "removed a comment", resolve_report: "resolved a report", dismiss_report: "dismissed a report",
     promote_mod: "promoted a member to mod", demote_mod: "removed a mod", ban_member: "banned a member", unban_member: "unbanned a member",
+    distinguish_comment: "distinguished a comment", undistinguish_comment: "undistinguished a comment",
+    sticky_comment: "stickied a comment", unsticky_comment: "unstickied a comment",
   };
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>

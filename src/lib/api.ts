@@ -831,6 +831,8 @@ function buildCommentTree(rows: Row[], postAuthorId: string): UiComment[] {
       body: deleted ? '[deleted]' : r.body,
       votes: r.vote_score ?? 0,
       deleted,
+      distinguished: !deleted && !!r.distinguished_at,
+      stickied: !deleted && !!r.stickied_at,
       replies: [],
     })
   }
@@ -840,6 +842,8 @@ function buildCommentTree(rows: Row[], postAuthorId: string): UiComment[] {
     if (parent) parent.replies.push(node)
     else roots.push(node)
   }
+  // Stickied mod comments float to the top; stable sort keeps created-at order otherwise.
+  roots.sort((a, b) => (b.stickied ? 1 : 0) - (a.stickied ? 1 : 0))
   return roots
 }
 
@@ -858,7 +862,7 @@ export async function fetchPostWithComments(id: string): Promise<UiPost> {
 
   const { data: comments, error: cErr } = await supabase
     .from('comments')
-    .select('id, body, vote_score, parent_id, created_at, author_id, deleted_at, author:profiles(username)')
+    .select('id, body, vote_score, parent_id, created_at, author_id, deleted_at, distinguished_at, stickied_at, author:profiles(username)')
     .eq('post_id', id)
     .order('created_at', { ascending: true })
   if (cErr) throw cErr

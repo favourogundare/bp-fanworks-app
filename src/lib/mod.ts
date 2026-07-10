@@ -133,6 +133,18 @@ export async function modSetBanned(profileId: string, banned: boolean, reason = 
   if (error) throw error
 }
 
+/** Mark/unmark my own comment as an official mod comment. */
+export async function modSetCommentDistinguished(commentId: string, on: boolean): Promise<void> {
+  const { error } = await supabase.rpc('mod_set_comment_distinguished', { p_comment: commentId, p_on: on })
+  if (error) throw error
+}
+
+/** Pin/unpin my own top-level comment to the top of the thread (also distinguishes it). */
+export async function modSetCommentSticky(commentId: string, on: boolean): Promise<void> {
+  const { error } = await supabase.rpc('mod_set_comment_sticky', { p_comment: commentId, p_on: on })
+  if (error) throw error
+}
+
 export async function modAssignMemberFlair(profileId: string, slug: string | null): Promise<void> {
   const { error } = await supabase.rpc('mod_assign_member_flair', { p_profile: profileId, p_slug: slug })
   if (error) throw error

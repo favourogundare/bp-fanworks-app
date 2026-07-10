@@ -9,6 +9,8 @@ export interface UiComment {
   body: string
   votes: number
   deleted?: boolean // soft-deleted: body/author blanked, thread preserved
+  distinguished?: boolean // official mod comment (MOD badge)
+  stickied?: boolean // pinned to the top of the thread (top-level only)
   replies: UiComment[]
 }
 
