@@ -8,9 +8,40 @@ export async function modSetPinned(postId: string, pinned: boolean): Promise<voi
   if (error) throw error
 }
 
-export async function modRemovePost(postId: string): Promise<void> {
-  const { error } = await supabase.rpc('mod_remove_post', { p_post: postId })
+export async function modRemovePost(postId: string, reason = ''): Promise<void> {
+  const { error } = await supabase.rpc('mod_remove_post', { p_post: postId, p_reason: reason })
   if (error) throw error
+}
+
+/** Lock (or unlock) a post's comments. */
+export async function modSetLocked(postId: string, locked: boolean): Promise<void> {
+  const { error } = await supabase.rpc('mod_set_locked', { p_post: postId, p_locked: locked })
+  if (error) throw error
+}
+
+export interface UiModAction {
+  id: string
+  mod: string // username
+  action: string
+  detail: string
+  when: string // ISO
+}
+
+/** Recent mod actions, newest first (RLS: mods only). */
+export async function fetchModLog(limit = 100): Promise<UiModAction[]> {
+  const { data, error } = await supabase
+    .from('mod_actions')
+    .select('id, action, detail, created_at, mod:profiles(username)')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    mod: r.mod?.username ?? 'unknown',
+    action: r.action,
+    detail: r.detail ?? '',
+    when: r.created_at,
+  }))
 }
 
 export async function modSetPostFlairs(postId: string, slugs: string[]): Promise<void> {

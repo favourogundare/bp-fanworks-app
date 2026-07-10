@@ -28,6 +28,7 @@ export interface UiPost {
   pollOptions: string[] // poll choice labels (empty unless type === 'poll')
   warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
+  locked: boolean // comments locked by a mod; DB policy blocks non-mod comments
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
 }
