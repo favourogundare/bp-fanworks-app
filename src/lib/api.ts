@@ -961,11 +961,45 @@ export async function updateMyProfile(fields: {
   if (error) throw error
 }
 
-/** Upload an avatar image; returns its public URL (avatars/ prefix in post-media bucket). */
-export async function uploadAvatar(file: File): Promise<string> {
+// The file input's accept="image/*" is advisory only; enforce a real allowlist
+// and size cap before upload. SVG is excluded on purpose: it can carry scripts
+// and the bucket serves files publicly.
+export const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+
+/** Error message if the file can't be used as an avatar, else null. */
+export function validateAvatarFile(file: File): string | null {
+  if (!AVATAR_TYPES.includes(file.type)) return 'Avatar must be a JPEG, PNG, WebP, or GIF image.'
+  if (file.size > AVATAR_MAX_BYTES) return 'Avatar image must be 2 MB or smaller.'
+  return null
+}
+
+/**
+ * Upload an avatar image; returns its public URL (avatars/ prefix in the
+ * post-media bucket). Uploads the new file before deleting the old one (found
+ * via previousUrl) so a failure can't leave the member avatarless; the delete
+ * is best-effort, since a missed cleanup just leaves an orphan.
+ * Paths stay random on purpose: post-media has no UPDATE policy and its INSERT
+ * policy is bucket-wide (0006), so a predictable per-member path could be
+ * pre-claimed by another member and never reclaimed (DELETE is owner-only).
+ */
+export async function uploadAvatar(file: File, previousUrl?: string | null): Promise<string> {
+  const invalid = validateAvatarFile(file)
+  if (invalid) throw new Error(invalid)
   const path = `avatars/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
   const { error } = await supabase.storage.from('post-media').upload(path, file)
   if (error) throw error
+  // Only delete objects we recognize as this app's avatars; the owner-scoped
+  // DELETE policy limits the blast radius to the member's own files regardless.
+  const oldPath = previousUrl?.split('?')[0].split('/object/public/post-media/')[1]
+  if (oldPath?.startsWith('avatars/')) {
+    try {
+      const { error: cleanupError } = await supabase.storage.from('post-media').remove([oldPath])
+      if (cleanupError) console.warn('old avatar cleanup failed', cleanupError)
+    } catch (e) {
+      console.warn('old avatar cleanup failed', e)
+    }
+  }
   return supabase.storage.from('post-media').getPublicUrl(path).data.publicUrl
 }
 
