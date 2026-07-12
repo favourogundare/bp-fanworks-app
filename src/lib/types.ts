@@ -28,6 +28,7 @@ export interface UiPost {
   pollOptions: string[] // poll choice labels (empty unless type === 'poll')
   warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
+  profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
 }
@@ -59,6 +60,7 @@ export interface UiProfile extends UiUserPreview {
   spoilerFree: boolean // spoiler-free mode toggle
   spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
   mutedTags: string[] // flair slugs muted everywhere (independent of spoiler mode)
+  usernameChangedAt: string | null // last username change; 30-day cooldown anchor
   followers: number
   karma: string
   contributions: number
