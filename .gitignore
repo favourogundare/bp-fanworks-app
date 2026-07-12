@@ -35,3 +35,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Vercel CLI local project link (contains project/org ids; not for VCS)
+.vercel
