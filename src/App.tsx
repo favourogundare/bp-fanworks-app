@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
@@ -1131,7 +1131,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
       if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
       if (JSON.stringify(mutedTagsEdit) !== JSON.stringify(profile.mutedTags || [])) patch.muted_tags = mutedTagsEdit;
-      if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile);
+      if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile, profile.avatarUrl);
       if (Object.keys(patch).length) await updateMyProfile(patch);
       onSaved(patch.username); // navigates if username changed, else reloads
     } catch (e: any) {
@@ -1150,6 +1150,13 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       </div>
       <label style={label}>USERNAME</label>
       <input style={field} value={username} onChange={(e) => setUsername(e.target.value)} />
+      {(() => {
+        // 30-day cooldown hint; the change_username RPC enforces the rule server-side.
+        if (!profile.usernameChangedAt) return null;
+        const until = new Date(new Date(profile.usernameChangedAt).getTime() + 30 * 86400_000);
+        if (until <= new Date()) return null;
+        return <div style={{ color: t.muted, fontSize: 12, marginTop: 4 }}>Username changed recently — changeable again on {until.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}.</div>;
+      })()}
       <label style={label}>DISPLAY NAME</label>
       <input style={field} value={display} onChange={(e) => setDisplay(e.target.value)} />
       <label style={label}>BIO</label>
@@ -1157,7 +1164,13 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <label style={label}>AVATAR</label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Avatar seed={profile.username} url={avatarFile ? URL.createObjectURL(avatarFile) : profile.avatarUrl} size={44} t={t} />
-        <input type="file" accept="image/*" onChange={(e) => setAvatarFile(e.target.files?.[0] ?? null)} style={{ color: t.muted, fontSize: 13 }} />
+        <input type="file" accept="image/*" onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          const bad = f && validateAvatarFile(f);
+          if (bad) { setErr(bad); setAvatarFile(null); e.target.value = ""; return; }
+          setErr("");
+          setAvatarFile(f);
+        }} style={{ color: t.muted, fontSize: 13 }} />
       </div>
       <label style={label}>AO3 LINK</label>
       <input style={field} placeholder="https://archiveofourown.org/users/…" value={ao3} onChange={(e) => setAo3(e.target.value)} />
