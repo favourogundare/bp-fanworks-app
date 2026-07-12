@@ -11,6 +11,7 @@ interface AuthContextValue {
   user: User | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<AuthResult>
+  signInWithProvider: (provider: 'discord' | 'google') => Promise<AuthResult>
   signUp: (email: string, password: string) => Promise<AuthResult>
   signOut: () => Promise<void>
   resetPassword: (email: string) => Promise<AuthResult>
@@ -41,6 +42,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null }
   }
 
+  // OAuth redirect flow: the browser leaves for the provider and returns to
+  // the app, where detectSessionInUrl picks the session up automatically.
+  const signInWithProvider = async (provider: 'discord' | 'google'): Promise<AuthResult> => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.origin },
+    })
+    return { error: error?.message ?? null }
+  }
+
   const signUp = async (email: string, password: string): Promise<AuthResult> => {
     const { error } = await supabase.auth.signUp({ email, password })
     return { error: error?.message ?? null }
@@ -63,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: session?.user ?? null,
     loading,
     signIn,
+    signInWithProvider,
     signUp,
     signOut,
     resetPassword,
