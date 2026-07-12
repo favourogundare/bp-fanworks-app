@@ -4,7 +4,7 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
@@ -1366,6 +1366,50 @@ function relBtn(t, active = false) {
 }
 
 // ----- App shell (layout for the routed pages) -----
+// Header account switcher (MILESTONES §10): lists roster accounts, switches
+// between them, and opens the login screen to add another.
+function AccountsMenu({ t, phone }: any) {
+  const { session, accounts, switchAccount, startAddAccount } = useAuth();
+  const [open, setOpen] = useState(false);
+  const activeId = session?.user?.id;
+  const pick = async (userId: string) => {
+    setOpen(false);
+    if (userId === activeId) return;
+    const { error } = await switchAccount(userId);
+    // Stored token was rotated/expired and dropped — prompt a fresh sign-in.
+    if (error) startAddAccount();
+  };
+  return (
+    <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={() => setOpen((o) => !o)} title="Accounts" aria-label="Accounts"
+        style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
+        <UserPlus size={18} />
+      </button>
+      {open && (
+        <div style={{ position: "absolute", right: 0, top: 44, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 6, zIndex: 40, minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,.35)" }}>
+          <div style={{ color: t.muted, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, padding: "6px 10px" }}>ACCOUNTS</div>
+          {accounts.map((a) => {
+            const active = a.userId === activeId;
+            return (
+              <button key={a.userId} onClick={() => pick(a.userId)}
+                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "8px 10px", borderRadius: 6 }}>
+                <Avatar seed={a.email} size={22} t={t} />
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.email}</span>
+                {active && <Check size={15} color={t.accent} />}
+              </button>
+            );
+          })}
+          <div style={{ height: 1, background: t.border, margin: "4px 0" }} />
+          <button onClick={() => { setOpen(false); startAddAccount(); }}
+            style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "8px 10px", borderRadius: 6 }}>
+            <UserPlus size={15} /> Add account
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppLayout() {
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -1478,6 +1522,7 @@ function AppLayout() {
           </button>
 
           <button onClick={() => goUser(myUsername)} title={myUsername || user?.email || ""} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Avatar seed={myUsername || user?.email || "me"} size={34} t={t} /></button>
+          <AccountsMenu t={t} phone={phone} />
           <button onClick={signOut} title="Sign out" aria-label="Sign out" style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><LogOut size={18} /></button>
         </div>
       </div>
@@ -1935,9 +1980,12 @@ function SetupNotice() {
 
 // The "/" branch: show login/splash when signed out, otherwise the app layout.
 function AuthedLayout() {
-  const { session, loading } = useAuth();
+  const { session, loading, addingAccount } = useAuth();
   if (loading) return <Splash />;
-  if (!session) return <LoginScreen />;
+  // addingAccount keeps a session alive but re-shows the login screen so a
+  // second account can sign in (its session replaces the client's, and the
+  // previous one is already saved in the roster).
+  if (!session || addingAccount) return <LoginScreen />;
   return <AppLayout />;
 }
 

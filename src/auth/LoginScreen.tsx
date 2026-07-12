@@ -7,7 +7,7 @@ import { useTheme } from '../lib/theme'
 type Mode = 'signin' | 'signup' | 'reset'
 
 export function LoginScreen() {
-  const { signIn, signInWithProvider, signUp, resetPassword } = useAuth()
+  const { signIn, signInWithProvider, signUp, resetPassword, addingAccount, cancelAddAccount } = useAuth()
   const { mode: themeMode } = useTheme()
   const c = goldPair[themeMode]
   const [mode, setMode] = useState<Mode>('signin')
@@ -150,7 +150,14 @@ export function LoginScreen() {
           </div>
         </div>
 
-        <h2 style={{ color: c.text, fontSize: 16, fontWeight: 700, margin: '14px 0 4px' }}>{title}</h2>
+        <h2 style={{ color: c.text, fontSize: 16, fontWeight: 700, margin: '14px 0 4px' }}>
+          {addingAccount ? 'Add another account' : title}
+        </h2>
+        {addingAccount && (
+          <div style={{ color: c.muted, fontSize: 12, marginBottom: 4 }}>
+            Sign in to a second account — you can switch between them from the account menu.
+          </div>
+        )}
 
         <label style={labelStyle}>Email</label>
         <input
@@ -227,6 +234,14 @@ export function LoginScreen() {
             <button type="button" style={linkBtn} onClick={() => switchMode('signin')}>
               Back to sign in
             </button>
+          )}
+          {addingAccount && (
+            <>
+              <span>·</span>
+              <button type="button" style={linkBtn} onClick={cancelAddAccount}>
+                Cancel
+              </button>
+            </>
           )}
         </div>
       </form>
