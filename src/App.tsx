@@ -330,7 +330,93 @@ function isAllowlistedImageUrl(raw: string): boolean {
   return okHost && IMAGE_EXT_RE.test(u.pathname);
 }
 
-// A URL rendered as a plain, safe, clickable link.
+// Fanwork-platform link chips (client-side only — no metadata fetching, no
+// backend). A link to a known fanwork platform renders as a recognizable chip
+// (platform icon + name + whatever is cleanly parseable from the URL itself,
+// like a username or work id). Deliberately NOT a fake "preview card": with no
+// fetching we have no title/summary, so we stay honest — it's a nicer link.
+// URLs that don't cleanly match stay plain links via CommentLink.
+type PlatformHit = { label: string; icon: string; detail?: string };
+
+// Path segments that are platform pages, not usernames — never show as @user.
+const DEVIANTART_RESERVED = new Set(["tag", "search", "join", "about", "topic", "shop", "forum", "daily-deviations", "core-membership"]);
+const TUMBLR_RESERVED = new Set(["search", "tagged", "explore", "settings", "dashboard", "login", "register", "blog", "communities"]);
+const ARTSTATION_RESERVED = new Set(["artwork", "search", "jobs", "learning", "marketplace", "prints", "blogs", "channels"]);
+
+function detectFanworkPlatform(raw: string): PlatformHit | null {
+  let u: URL;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const segs = u.pathname.split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
+
+  if (host === "archiveofourown.org") {
+    let detail;
+    if (segs[0] === "works" && /^\d+$/.test(segs[1] ?? "")) detail = `Work #${segs[1]}`;
+    else if (segs[0] === "series" && /^\d+$/.test(segs[1] ?? "")) detail = `Series #${segs[1]}`;
+    else if (segs[0] === "collections" && segs[1]) detail = `Collection: ${segs[1]}`;
+    else if (segs[0] === "users" && segs[1]) detail = `@${segs[1]}`;
+    return { label: "AO3", icon: "📖", detail };
+  }
+  if (host === "deviantart.com" || host.endsWith(".deviantart.com")) {
+    let detail;
+    const sub = host.endsWith(".deviantart.com") ? host.slice(0, -".deviantart.com".length) : "";
+    if (sub && sub !== "www") detail = `@${sub}`; // legacy username.deviantart.com
+    else if (segs[1] === "art" && segs[0]) detail = `@${segs[0]}`;
+    else if (segs.length === 1 && !DEVIANTART_RESERVED.has(segs[0])) detail = `@${segs[0]}`;
+    return { label: "DeviantArt", icon: "🎨", detail };
+  }
+  if (host === "tumblr.com" || host.endsWith(".tumblr.com")) {
+    let detail;
+    const sub = host.endsWith(".tumblr.com") ? host.slice(0, -".tumblr.com".length) : "";
+    // Skip CDN/multi-level subdomains (64.media.tumblr.com) — not blog names.
+    if (sub && sub !== "www" && sub !== "media" && sub !== "assets" && sub !== "static" && !sub.includes(".")) detail = `@${sub}`; // blogname.tumblr.com
+    else if (segs[0] === "blog" && segs[1] === "view" && segs[2]) detail = `@${segs[2]}`;
+    else if (segs[0] && !TUMBLR_RESERVED.has(segs[0])) detail = `@${segs[0]}`; // tumblr.com/blogname/...
+    return { label: "Tumblr", icon: "🌀", detail };
+  }
+  if (host === "artstation.com") {
+    let detail;
+    if (segs[0] === "artwork" && segs[1]) detail = "Artwork";
+    else if (segs.length === 1 && !ARTSTATION_RESERVED.has(segs[0])) detail = `@${segs[0]}`;
+    return { label: "ArtStation", icon: "🖼️", detail };
+  }
+  if (host === "pixiv.net") {
+    const p = /^[a-z]{2}$/.test(segs[0] ?? "") ? segs.slice(1) : segs; // strip locale prefix (/en/...)
+    let detail;
+    if (p[0] === "artworks" && /^\d+$/.test(p[1] ?? "")) detail = `Illustration #${p[1]}`;
+    else if (p[0] === "users" && /^\d+$/.test(p[1] ?? "")) detail = `User #${p[1]}`;
+    return { label: "Pixiv", icon: "🖌️", detail };
+  }
+  if (host === "wattpad.com") {
+    let detail;
+    const storyId = segs[0] === "story" ? segs[1]?.match(/^(\d+)/)?.[1] : undefined;
+    if (storyId) detail = `Story #${storyId}`;
+    else if (segs[0] === "user" && segs[1]) detail = `@${segs[1]}`;
+    return { label: "Wattpad", icon: "📙", detail };
+  }
+  return null;
+}
+
+// Known-platform URL rendered as a compact chip: icon + platform + parsed
+// detail. Full URL kept in the title tooltip; stopPropagation so clicking a
+// chip inside a comment doesn't toggle thread collapse.
+function PlatformChip({ href, hit, t }: { href: string; hit: PlatformHit; t: any }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer nofollow" title={href}
+      onClick={(e) => e.stopPropagation()}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: "100%", padding: "1px 10px",
+        border: `1px solid ${t.border}`, borderRadius: 999, background: t.pill, color: t.text,
+        fontSize: 13, fontWeight: 700, textDecoration: "none", verticalAlign: "middle", lineHeight: 1.7 }}>
+      <span aria-hidden="true">{hit.icon}</span>
+      <span style={{ color: t.accent }}>{hit.label}</span>
+      {hit.detail && <span style={{ color: t.muted, fontWeight: 500, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hit.detail}</span>}
+      <span aria-hidden="true" style={{ color: t.muted, fontSize: 11 }}>↗</span>
+    </a>
+  );
+}
+
+// A comment URL rendered as a plain, safe, clickable link.
 function CommentLink({ href, t }: { href: string; t: any }) {
   return (
     <a href={href} target="_blank" rel="noopener noreferrer nofollow"
@@ -349,10 +435,10 @@ function InlineImage({ src, t }: { src: string; t: any }) {
   );
 }
 
-// Turn a plain-text run into nodes: bare allowlisted image URLs -> inline images,
-// other bare https URLs -> clickable links, everything else stays text. Used for
-// the plain segments inside the rich-text renderer below so fanart embeds work
-// anywhere body text appears.
+// Turn a plain-text run into nodes: allowlisted image URLs -> inline images,
+// known fanwork-platform URLs -> platform chips, other bare https URLs ->
+// clickable links, everything else stays text. Used for the plain segments
+// inside the rich-text renderer below so embeds work anywhere body text appears.
 function linkify(text: string, t: any, kp: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const parts = text.split(/(https:\/\/[^\s<]+)/g);
@@ -361,9 +447,13 @@ function linkify(text: string, t: any, kp: string): React.ReactNode[] {
     // Don't swallow trailing sentence punctuation into the URL.
     const trail = part.match(/[.,;:!?)\]}'"]+$/)?.[0] ?? "";
     const url = trail ? part.slice(0, part.length - trail.length) : part;
-    out.push(isAllowlistedImageUrl(url)
+    const isImage = isAllowlistedImageUrl(url);
+    const platform = isImage ? null : detectFanworkPlatform(url); // images stay the InlineImage path
+    out.push(isImage
       ? <InlineImage key={`${kp}-lk${i}`} src={url} t={t} />
-      : <CommentLink key={`${kp}-lk${i}`} href={url} t={t} />);
+      : platform
+        ? <PlatformChip key={`${kp}-lk${i}`} href={url} hit={platform} t={t} />
+        : <CommentLink key={`${kp}-lk${i}`} href={url} t={t} />);
     if (trail) out.push(trail);
   });
   return out;
