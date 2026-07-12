@@ -805,7 +805,7 @@ export async function updateMyProfile(fields: {
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
   // Username changes go through the change_username RPC: the direct column
-  // grant was revoked in 0021 so the 30-day cooldown is enforced in the DB.
+  // grant was revoked in 0025 so the 30-day cooldown is enforced in the DB.
   const { username, ...rest } = fields
   if (username !== undefined) {
     const { error } = await supabase.rpc('change_username', { p_username: username })
