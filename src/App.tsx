@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
@@ -755,8 +755,24 @@ function CommunitySidebar({ t }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState<{ members: number; contributions: number } | null>(null);
   const [pinned, setPinned] = useState<any[]>([]);
+  const [joined, setJoined] = useState<boolean | null>(null); // null until loaded
+  const [joinBusy, setJoinBusy] = useState(false);
   useEffect(() => { fetchCommunityStats().then(setStats).catch((e) => console.error("stats load failed", e)); }, []);
   useEffect(() => { fetchPinned().then(setPinned).catch((e) => console.error("pinned load failed", e)); }, []);
+  useEffect(() => { fetchMyMembership().then(setJoined).catch((e) => console.error("membership load failed", e)); }, []);
+  // Optimistically flip membership + the Wakandans count, rolling back on failure.
+  const toggleJoin = () => {
+    if (joined === null || joinBusy) return;
+    const next = !joined;
+    setJoinBusy(true);
+    setJoined(next);
+    setStats((s) => s && { ...s, members: s.members + (next ? 1 : -1) });
+    setMembership(next).catch((e) => {
+      console.error("join toggle failed", e);
+      setJoined(!next);
+      setStats((s) => s && { ...s, members: s.members + (next ? -1 : 1) });
+    }).finally(() => setJoinBusy(false));
+  };
   // Resolve a bookmark to its target path, or null when nothing matches yet.
   const bookmarkPath = (b: any): string | null => {
     if (b.to) return b.to;
@@ -769,6 +785,10 @@ function CommunitySidebar({ t }) {
       <p style={{ color: t.muted, fontSize: 13, lineHeight: 1.5, margin: "0 0 14px" }}>{community.blurb}</p>
       <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.muted, fontSize: 13, marginBottom: 6 }}><BookOpen size={15} /> Created {community.created}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.muted, fontSize: 13, marginBottom: 14 }}><Globe size={15} /> Public</div>
+      <button onClick={toggleJoin} disabled={joined === null || joinBusy}
+        style={{ width: "100%", background: joined ? t.panel2 : t.accent, color: joined ? t.text : t.bg, border: `1px solid ${joined ? t.border : t.accent}`, borderRadius: 999, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: joined === null || joinBusy ? "default" : "pointer", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: joined === null ? 0.6 : 1 }}>
+        {joined ? <><UserMinus size={15} /> Leave</> : <><UserPlus size={15} /> Join</>}
+      </button>
       <button style={{ width: "100%", background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         <BookOpen size={15} /> Community Guide
       </button>
@@ -1312,6 +1332,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [banner, setBanner] = useState(profile.banner);
   const [ao3, setAo3] = useState(profile.ao3 || "");
   const [kofi, setKofi] = useState(profile.kofi || "");
+  const [flairSlug, setFlairSlug] = useState<string | null>(profile.flairSlug ?? null);
   const [blur, setBlur] = useState(profile.blurMedia);
   const [spoilerFree, setSpoilerFree] = useState(!!profile.spoilerFree);
   const [spoilerTags, setSpoilerTags] = useState<string[]>(profile.spoilerTags || []);
@@ -1350,6 +1371,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (JSON.stringify(mutedTagsEdit) !== JSON.stringify(profile.mutedTags || [])) patch.muted_tags = mutedTagsEdit;
       if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile, profile.avatarUrl);
       if (Object.keys(patch).length) await updateMyProfile(patch);
+      // Member flair goes through its own RPC (scope-guarded), not updateMyProfile.
+      if ((flairSlug ?? null) !== (profile.flairSlug ?? null)) await setMyMemberFlair(flairSlug);
       onSaved(patch.username); // navigates if username changed, else reloads
     } catch (e: any) {
       setErr(/duplicate|unique/i.test(e?.message || "") ? "That username is taken." : e?.message || "Save failed.");
@@ -1393,6 +1416,11 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <input style={field} placeholder="https://archiveofourown.org/users/…" value={ao3} onChange={(e) => setAo3(e.target.value)} />
       <label style={label}>KO-FI LINK</label>
       <input style={field} placeholder="https://ko-fi.com/…" value={kofi} onChange={(e) => setKofi(e.target.value)} />
+      <label style={label}>MEMBER FLAIR</label>
+      <select style={{ ...field, cursor: "pointer" }} value={flairSlug ?? ""} onChange={(e) => setFlairSlug(e.target.value || null)}>
+        <option value="">— no flair —</option>
+        {MEMBER_FLAIRS.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
+      </select>
       <label style={label}>CONTENT</label>
       <label style={{ display: "flex", alignItems: "center", gap: 8, color: t.text, fontSize: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} /> Blur NSFW / spoiler media

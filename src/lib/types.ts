@@ -52,6 +52,7 @@ export interface UiUserPreview {
 }
 
 export interface UiProfile extends UiUserPreview {
+  flairSlug: string | null // own member-flair slug, for the self-flair picker
   banner: string
   avatarUrl: string | null
   ao3: string | null // AO3 profile link
