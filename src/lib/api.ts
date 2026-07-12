@@ -193,7 +193,7 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
+  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -215,6 +215,7 @@ function mapPost(row: Row): UiPost {
     pollOptions: Array.isArray(row.poll_options) ? (row.poll_options as string[]) : [],
     warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
+    profilePinned: !!row.profile_pinned_at,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
   }
@@ -360,17 +361,41 @@ export async function toggleTagFollow(slug: string, on: boolean): Promise<void> 
 
 /** Community posts carrying any flair the member follows, newest first. */
 export async function fetchFollowedFeed(): Promise<UiPost[]> {
-  const slugs = await fetchMyFollowedTags()
-  if (!slugs.length) return []
-  // Same join-rooted shape as fetchTagFeed; dedup posts that match >1 followed tag.
-  const { data, error } = await supabase
-    .from('post_flairs')
-    .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
-    .in('flairs.slug', slugs)
-    .eq('post.surface', 'community')
-  if (error) throw error
+  // Following = posts carrying a followed tag + posts in followed reading
+  // lists, merged and deduped, newest first.
+  const me = await getMyProfileId()
+  const [slugs, listFollows] = await Promise.all([
+    fetchMyFollowedTags(),
+    me
+      ? supabase.from('collection_follows').select('collection_id').eq('follower_id', me)
+      : Promise.resolve({ data: [] as Row[], error: null }),
+  ])
+  const listIds = (listFollows.data ?? []).map((r: Row) => r.collection_id)
+  if (!slugs.length && !listIds.length) return []
+
+  const [tagRes, listRes] = await Promise.all([
+    slugs.length
+      ? // Same join-rooted shape as fetchTagFeed.
+        supabase
+          .from('post_flairs')
+          .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
+          .in('flairs.slug', slugs)
+          .eq('post.surface', 'community')
+      : Promise.resolve({ data: [] as Row[], error: null }),
+    listIds.length
+      ? // List posts are included regardless of surface — a list is a
+        // deliberate curation, so profile-surface posts belong too.
+        supabase
+          .from('collection_items')
+          .select(`collection_id, post:posts!inner(${POST_FIELDS})`)
+          .in('collection_id', listIds)
+      : Promise.resolve({ data: [] as Row[], error: null }),
+  ])
+  if (tagRes.error) throw tagRes.error
+  if (listRes.error) throw listRes.error
+
   const seen = new Set<string>()
-  return (data ?? [])
+  return [...(tagRes.data ?? []), ...(listRes.data ?? [])]
     .map((r: Row) => r.post)
     .filter((p: Row) => p && !seen.has(p.id) && seen.add(p.id))
     .sort((a: Row, b: Row) => (a.created_at < b.created_at ? 1 : -1))
@@ -449,6 +474,18 @@ export async function togglePostFollow(postId: string, on: boolean): Promise<voi
       .match({ follower_id: me, post_id: postId })
     if (error) throw error
   }
+}
+
+// ----- pinned profile posts -----
+
+/** Pin (on=true) or unpin one of your own posts on your profile. RLS
+ *  posts_update_own restricts this to the author's rows. */
+export async function setProfilePin(postId: string, on: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ profile_pinned_at: on ? new Date().toISOString() : null })
+    .eq('id', postId)
+  if (error) throw error
 }
 
 // ----- reading lists / collections (public, followable; MILESTONES §6) -----
@@ -982,23 +1019,66 @@ export async function updateMyProfile(fields: {
   // javascript:/data: URLs at the trust boundary.
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
-  const { error } = await supabase.from('profiles').update(fields).eq('id', me)
-  if (error) throw error
+  // Username changes go through the change_username RPC: the direct column
+  // grant was revoked in 0025 so the 30-day cooldown is enforced in the DB.
+  const { username, ...rest } = fields
+  if (username !== undefined) {
+    const { error } = await supabase.rpc('change_username', { p_username: username })
+    if (error) throw error
+  }
+  if (Object.keys(rest).length) {
+    const { error } = await supabase.from('profiles').update(rest).eq('id', me)
+    if (error) throw error
+  }
 }
 
 /** Set (or clear, with null) the signed-in member's own member flair by slug.
- *  Goes through the set_my_member_flair RPC (0020) so the slug is resolved
+ *  Goes through the set_my_member_flair RPC (0026) so the slug is resolved
  *  within scope='member' and only the caller's row is touched. */
 export async function setMyMemberFlair(slug: string | null): Promise<void> {
   const { error } = await supabase.rpc('set_my_member_flair', { p_slug: slug })
   if (error) throw error
 }
 
-/** Upload an avatar image; returns its public URL (avatars/ prefix in post-media bucket). */
-export async function uploadAvatar(file: File): Promise<string> {
+// The file input's accept="image/*" is advisory only; enforce a real allowlist
+// and size cap before upload. SVG is excluded on purpose: it can carry scripts
+// and the bucket serves files publicly.
+export const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+
+/** Error message if the file can't be used as an avatar, else null. */
+export function validateAvatarFile(file: File): string | null {
+  if (!AVATAR_TYPES.includes(file.type)) return 'Avatar must be a JPEG, PNG, WebP, or GIF image.'
+  if (file.size > AVATAR_MAX_BYTES) return 'Avatar image must be 2 MB or smaller.'
+  return null
+}
+
+/**
+ * Upload an avatar image; returns its public URL (avatars/ prefix in the
+ * post-media bucket). Uploads the new file before deleting the old one (found
+ * via previousUrl) so a failure can't leave the member avatarless; the delete
+ * is best-effort, since a missed cleanup just leaves an orphan.
+ * Paths stay random on purpose: post-media has no UPDATE policy and its INSERT
+ * policy is bucket-wide (0006), so a predictable per-member path could be
+ * pre-claimed by another member and never reclaimed (DELETE is owner-only).
+ */
+export async function uploadAvatar(file: File, previousUrl?: string | null): Promise<string> {
+  const invalid = validateAvatarFile(file)
+  if (invalid) throw new Error(invalid)
   const path = `avatars/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
   const { error } = await supabase.storage.from('post-media').upload(path, file)
   if (error) throw error
+  // Only delete objects we recognize as this app's avatars; the owner-scoped
+  // DELETE policy limits the blast radius to the member's own files regardless.
+  const oldPath = previousUrl?.split('?')[0].split('/object/public/post-media/')[1]
+  if (oldPath?.startsWith('avatars/')) {
+    try {
+      const { error: cleanupError } = await supabase.storage.from('post-media').remove([oldPath])
+      if (cleanupError) console.warn('old avatar cleanup failed', cleanupError)
+    } catch (e) {
+      console.warn('old avatar cleanup failed', e)
+    }
+  }
   return supabase.storage.from('post-media').getPublicUrl(path).data.publicUrl
 }
 
@@ -1020,7 +1100,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, username_changed_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -1032,6 +1112,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .select(POST_FIELDS)
       .eq('author_id', p.id)
       .eq('surface', 'profile')
+      .order('profile_pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }),
     supabase
       .from('relationships')
@@ -1055,6 +1136,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
     mutedTags: p.muted_tags ?? [],
+    usernameChangedAt: p.username_changed_at ?? null,
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,

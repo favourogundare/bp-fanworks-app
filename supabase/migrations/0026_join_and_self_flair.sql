@@ -1,5 +1,5 @@
 -- =============================================================================
--- Black Panther Fanworks — 0024 community membership + self-service flair
+-- Black Panther Fanworks — 0026 community membership + self-service flair
 -- Two independent pieces (JOIN §…):
 --   (a) community_members: persist Join/Leave so the "Wakandans" count and the
 --       button state are real (today the sidebar counts every profile row).
