@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
@@ -400,7 +400,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
 }
 
 // ----- Post card -----
-function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged }: any) {
+function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged, canPin }: any) {
   const [followed, toggleFollowed] = usePostFollow(post.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -458,12 +458,18 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         <Avatar seed={post.author} size={26} t={t} />
         <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
-        {post.pinned && <Pin size={13} color={t.accent} />}
+        {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
         {mine && (
           <div style={{ marginLeft: "auto", position: "relative" }} onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={16} /></button>
             {menuOpen && (
               <div style={{ position: "absolute", right: 0, top: 22, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 4, zIndex: 10, minWidth: 110 }}>
+                {canPin && (
+                  <button onClick={() => { setMenuOpen(false); setProfilePin(post.id, !post.profilePinned).then(() => onChanged?.()).catch((e) => console.error("profile pin failed", e)); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>
+                    {post.profilePinned ? "Unpin from profile" : "Pin to profile"}
+                  </button>
+                )}
                 <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
                 <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
               </div>
@@ -1320,7 +1326,7 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
           {profile.posts.length === 0
             ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
-            : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} />)}
+            : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} canPin={isMe} />)}
         </div>
       </div>
       <div>
