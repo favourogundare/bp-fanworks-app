@@ -44,7 +44,7 @@ const community = {
   name: "Black Panther Fanworks",
   short: "Black Panther Fanworks",
   blurb:
-    "A Wakanda-first community for fanfiction, art, music, cosplay, and discussion rooted in the Black Panther MCU films and comics canon. Source your artwork, flair your posts, and engage in good faith. Wakanda Forever.",
+    "A Wakanda-first community made for fanfiction, art, music, cosplay, and discussion rooted in the Black Panther MCU films and comics canon. This is for you! Source your artwork, flair your posts, and engage in good faith. Wakanda Forever.",
   created: "Jun 27, 2026",
   // Bookmarks link to a route (`to`) or to a pinned post matched by title
   // (`pinnedMatch`) so we never hardcode post ids.
