@@ -301,6 +301,74 @@ function Spoiler({ text, t }: any) {
   );
 }
 
+// Inline fanart embeds (client-side only — no metadata fetching, no backend).
+// We only turn a URL into an <img> when it's an https link to a KNOWN reputable
+// image/fanart host AND ends in an image extension. Allowlist-first avoids
+// tracking-pixel / content-safety risks from rendering arbitrary URLs as images.
+// Anything not matched stays a normal clickable link.
+const IMAGE_HOST_ALLOWLIST = new Set([
+  "i.imgur.com", "imgur.com",
+  "cdn.discordapp.com", "media.discordapp.net",
+  "i.redd.it", "preview.redd.it",
+  "pbs.twimg.com",
+  "raw.githubusercontent.com", "user-images.githubusercontent.com",
+]);
+// Suffix matches for hosts that shard across many subdomains.
+const IMAGE_HOST_SUFFIXES = [
+  ".media.tumblr.com",   // Tumblr media (e.g. 64.media.tumblr.com)
+  ".artstation.com",     // ArtStation CDNs (cdna./cdnb.)
+  ".wixmp.com",          // DeviantArt-served images
+];
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif)$/i;
+
+function isAllowlistedImageUrl(raw: string): boolean {
+  let u: URL;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  const okHost = IMAGE_HOST_ALLOWLIST.has(host) || IMAGE_HOST_SUFFIXES.some((s) => host.endsWith(s));
+  return okHost && IMAGE_EXT_RE.test(u.pathname);
+}
+
+// A URL rendered as a plain, safe, clickable link.
+function CommentLink({ href, t }: { href: string; t: any }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer nofollow"
+      style={{ color: t.accent, textDecoration: "underline", wordBreak: "break-word" }}>{href}</a>
+  );
+}
+
+// Allowlisted image URL rendered inline. Lazy-loaded, capped so it can't blow
+// out the layout; if it fails to load it degrades to the plain link.
+function InlineImage({ src, t }: { src: string; t: any }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <CommentLink href={src} t={t} />;
+  return (
+    <img src={src} alt="Shared image" loading="lazy" onError={() => setFailed(true)}
+      style={{ display: "block", maxWidth: "100%", maxHeight: 360, borderRadius: 12, border: `1px solid ${t.border}`, margin: "6px 0", objectFit: "contain" }} />
+  );
+}
+
+// Turn a plain-text run into nodes: bare allowlisted image URLs -> inline images,
+// other bare https URLs -> clickable links, everything else stays text. Used for
+// the plain segments inside the rich-text renderer below so fanart embeds work
+// anywhere body text appears.
+function linkify(text: string, t: any, kp: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  const parts = text.split(/(https:\/\/[^\s<]+)/g);
+  parts.forEach((part, i) => {
+    if (i % 2 === 0) { if (part) out.push(part); return; }
+    // Don't swallow trailing sentence punctuation into the URL.
+    const trail = part.match(/[.,;:!?)\]}'"]+$/)?.[0] ?? "";
+    const url = trail ? part.slice(0, part.length - trail.length) : part;
+    out.push(isAllowlistedImageUrl(url)
+      ? <InlineImage key={`${kp}-lk${i}`} src={url} t={t} />
+      : <CommentLink key={`${kp}-lk${i}`} href={url} t={t} />);
+    if (trail) out.push(trail);
+  });
+  return out;
+}
+
 // Single client-side renderer for post & comment bodies. Extends the original
 // spoiler-only parser into a small, dependency-free markdown subset that matches
 // exactly what the formatting toolbar emits. Everything is built as React
@@ -314,13 +382,14 @@ function codeInlineStyle(t: any): React.CSSProperties {
 
 // Inline spans: **bold**, *italic*, `code`, [text](url) and >!spoiler!<.
 // Bold is matched before italic; code and links are captured whole so their
-// inner text is not re-parsed as markdown.
+// inner text is not re-parsed as markdown. Plain runs between tokens are passed
+// through linkify() so bare fanart URLs embed inline.
 function renderInlineRich(text: string, t: any, kp: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const re = /(\*\*(?:[^*]|\*(?!\*))+\*\*)|(\*[^*\n]+\*)|(`[^`\n]+`)|(>!.+?!<)|(\[[^\]]+\]\((?:https?:\/\/|mailto:|\/)[^)\s]+\))/g;
   let last = 0, i = 0, m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) out.push(...linkify(text.slice(last, m.index), t, `${kp}-p${last}`));
     const tok = m[0];
     if (m[1]) out.push(<strong key={`${kp}-${i}`}>{renderInlineRich(tok.slice(2, -2), t, `${kp}-${i}b`)}</strong>);
     else if (m[2]) out.push(<em key={`${kp}-${i}`}>{renderInlineRich(tok.slice(1, -1), t, `${kp}-${i}i`)}</em>);
@@ -329,7 +398,7 @@ function renderInlineRich(text: string, t: any, kp: string): React.ReactNode[] {
     else { const mm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)!; out.push(<a key={`${kp}-${i}`} href={mm[2]} target="_blank" rel="noopener noreferrer" style={{ color: t.link, textDecoration: "underline" }}>{mm[1]}</a>); }
     last = re.lastIndex; i++;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) out.push(...linkify(text.slice(last), t, `${kp}-pend`));
   return out;
 }
 
