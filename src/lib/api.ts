@@ -336,17 +336,41 @@ export async function toggleTagFollow(slug: string, on: boolean): Promise<void> 
 
 /** Community posts carrying any flair the member follows, newest first. */
 export async function fetchFollowedFeed(): Promise<UiPost[]> {
-  const slugs = await fetchMyFollowedTags()
-  if (!slugs.length) return []
-  // Same join-rooted shape as fetchTagFeed; dedup posts that match >1 followed tag.
-  const { data, error } = await supabase
-    .from('post_flairs')
-    .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
-    .in('flairs.slug', slugs)
-    .eq('post.surface', 'community')
-  if (error) throw error
+  // Following = posts carrying a followed tag + posts in followed reading
+  // lists, merged and deduped, newest first.
+  const me = await getMyProfileId()
+  const [slugs, listFollows] = await Promise.all([
+    fetchMyFollowedTags(),
+    me
+      ? supabase.from('collection_follows').select('collection_id').eq('follower_id', me)
+      : Promise.resolve({ data: [] as Row[], error: null }),
+  ])
+  const listIds = (listFollows.data ?? []).map((r: Row) => r.collection_id)
+  if (!slugs.length && !listIds.length) return []
+
+  const [tagRes, listRes] = await Promise.all([
+    slugs.length
+      ? // Same join-rooted shape as fetchTagFeed.
+        supabase
+          .from('post_flairs')
+          .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
+          .in('flairs.slug', slugs)
+          .eq('post.surface', 'community')
+      : Promise.resolve({ data: [] as Row[], error: null }),
+    listIds.length
+      ? // List posts are included regardless of surface — a list is a
+        // deliberate curation, so profile-surface posts belong too.
+        supabase
+          .from('collection_items')
+          .select(`collection_id, post:posts!inner(${POST_FIELDS})`)
+          .in('collection_id', listIds)
+      : Promise.resolve({ data: [] as Row[], error: null }),
+  ])
+  if (tagRes.error) throw tagRes.error
+  if (listRes.error) throw listRes.error
+
   const seen = new Set<string>()
-  return (data ?? [])
+  return [...(tagRes.data ?? []), ...(listRes.data ?? [])]
     .map((r: Row) => r.post)
     .filter((p: Row) => p && !seen.has(p.id) && seen.add(p.id))
     .sort((a: Row, b: Row) => (a.created_at < b.created_at ? 1 : -1))
