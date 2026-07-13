@@ -29,6 +29,7 @@ export interface UiPost {
   warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
   profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
+  archived: boolean // author-archived: hidden from feeds/tags/search, direct link still works
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
 }

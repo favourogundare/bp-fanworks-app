@@ -3,7 +3,7 @@ import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
-  FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
+  FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus, Archive,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
@@ -760,6 +760,11 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
         {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
+        {post.archived && (
+          <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.muted, fontSize: 11, fontWeight: 700, border: `1px solid ${t.border}`, borderRadius: 999, padding: "1px 8px" }}>
+            <Archive size={11} /> Archived
+          </span>
+        )}
         {mine && (
           <div style={{ marginLeft: "auto", position: "relative" }} onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={16} /></button>
@@ -771,6 +776,10 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
                     {post.profilePinned ? "Unpin from profile" : "Pin to profile"}
                   </button>
                 )}
+                <button onClick={() => { setMenuOpen(false); setPostArchived(post.id, !post.archived).then(() => onChanged?.()).catch((e) => console.error("post archive failed", e)); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>
+                  {post.archived ? "Unarchive" : "Archive"}
+                </button>
                 <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
                 <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
               </div>
@@ -1364,6 +1373,10 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
               <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={18} /></button>
               {menuOpen && (
                 <div style={{ position: "absolute", right: 0, top: 24, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 4, zIndex: 10, minWidth: 110 }}>
+                  <button onClick={() => { setMenuOpen(false); setPostArchived(post.id, !post.archived).then(() => onCommentAdded?.()).catch((e) => console.error("post archive failed", e)); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>
+                    {post.archived ? "Unarchive" : "Archive"}
+                  </button>
                   <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
                   <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
                 </div>
@@ -1372,6 +1385,12 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
           )}
         </div>
         <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)} {...hoverHandlers}>{post.author}</div>
+        {post.archived && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", marginBottom: 12, color: t.muted, fontSize: 13 }}>
+            <Archive size={15} />
+            <span>This post is archived — hidden from feeds, tag pages, and search, but anyone with the link can view it.</span>
+          </div>
+        )}
         {editing ? (
           <div style={{ marginBottom: 14 }}>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
@@ -1576,6 +1595,13 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
   const [editing, setEditing] = useState(false);
+  // Owner-only "Archived" tab (MILESTONES §4): archived posts are excluded from
+  // the public posts list, so the owner browses/unarchives them here.
+  const [tab, setTab] = useState<"posts" | "archived">("posts");
+  const [archived, setArchived] = useState<UiPost[]>([]);
+  const loadArchived = () => fetchMyArchivedPosts().then(setArchived).catch((e) => console.error("archived load failed", e));
+  useEffect(() => { setTab("posts"); }, [profile?.id]);
+  useEffect(() => { if (isMe && tab === "archived") loadArchived(); }, [isMe, tab, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the real relationship state whenever we view a different profile.
   useEffect(() => {
@@ -1658,10 +1684,22 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
           </div>
         )}
         <MemberCollections t={t} username={profile.username} />
+        {isMe && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={() => setTab("posts")} style={relBtn(t, tab === "posts")}>Posts</button>
+            <button onClick={() => setTab("archived")} style={relBtn(t, tab === "archived")}><Archive size={14} /> Archived</button>
+          </div>
+        )}
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
-          {profile.posts.length === 0
-            ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
-            : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} canPin={isMe} />)}
+          {tab === "archived" ? (
+            archived.length === 0
+              ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No archived posts. Archive one from its “⋯” menu to tuck it away from feeds and search.</div>
+              : archived.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={() => { loadArchived(); onProfileChanged?.(); }} canPin={false} />)
+          ) : (
+            profile.posts.length === 0
+              ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
+              : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} canPin={isMe} />)
+          )}
         </div>
       </div>
       <div>
