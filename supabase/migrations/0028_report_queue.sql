@@ -1,5 +1,5 @@
 -- Reporting → mod report queue (MILESTONES §9). Users flag posts/comments;
--- mods action them from /mod/reports. Builds on 0026 (log_mod_action /
+-- mods action them from /mod/reports. Builds on 0027 (log_mod_action /
 -- mod_actions). Idempotent throughout, per DB health rules.
 
 -- ----- reports table -----------------------------------------------------------

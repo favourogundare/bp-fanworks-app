@@ -1,6 +1,6 @@
 -- Moderation toolkit, slice 1 (MILESTONES §9): mod action log, comment
 -- locking, and removal reasons. Builds on the 0007 RPCs — every mod action now
--- writes an audit row. 0025 is reserved for join/self-flair (PR #64).
+-- writes an audit row. 0026 is join_and_self_flair (PR #64, merged); this is 0027.
 -- Idempotent throughout, per DB health rules.
 
 -- ----- mod action log ---------------------------------------------------------

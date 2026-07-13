@@ -1,5 +1,5 @@
 -- Moderation toolkit, slice 2 (MILESTONES §9): promote/remove mods and ban
--- from community. Builds on 0026 (log_mod_action). Idempotent throughout, per
+-- from community. Builds on 0027 (log_mod_action). Idempotent throughout, per
 -- DB health rules.
 --
 -- banned_at is NOT in the profiles column-level update grant (0001), so only
@@ -53,7 +53,7 @@ drop policy if exists posts_insert_own on posts;
 create policy posts_insert_own on posts for insert
   with check (author_id = current_profile_id() and not is_banned());
 
--- Keeps the 0026 locked-post condition, adds the ban check.
+-- Keeps the 0027 locked-post condition, adds the ban check.
 drop policy if exists comments_insert_own on comments;
 create policy comments_insert_own on comments for insert
   with check (
