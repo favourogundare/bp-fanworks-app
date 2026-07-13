@@ -11,9 +11,9 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
@@ -52,6 +52,7 @@ const community = {
     { label: "Wiki", pinnedMatch: /lore megathread/i },
     { label: "Fanfic Archive", to: "/t/fanfiction" },
     { label: "Weekly Self-Promo Thread", pinnedMatch: /self-promo/i },
+    { label: "Commission Board", to: "/commissions" },
   ],
   rules: [
     { title: "Source All Artwork and Scans", desc: "All fanart, cosplay photos, or music must clearly credit the original artist or creator in the post title or a comment. If you are the creator, you may tag it as [OC]." },
@@ -2285,6 +2286,240 @@ function MemberRoute() {
   return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} onSavedProfile={onSavedProfile} myUsername={c.myUsername} />;
 }
 
+// ----- Commission board (MILESTONES §9) -----
+// Two independent lists — artists advertising open slots, and members posting
+// requests. No in-app messaging/matching: contact happens via the listing's
+// link or DMs, same as the rest of the prototype.
+function CommissionFormModal({ t, kind, onClose, onCreated }: any) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priceInfo, setPriceInfo] = useState("");
+  const [contactUrl, setContactUrl] = useState("");
+  const [slotsTotal, setSlotsTotal] = useState(1);
+  const [budget, setBudget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!title.trim()) { setError("Give it a title."); return; }
+    if (kind === "listing" && contactUrl.trim() && !/^https:\/\//i.test(contactUrl.trim())) { setError("Links must start with https://"); return; }
+    setBusy(true); setError(null);
+    try {
+      if (kind === "listing") {
+        await createCommissionListing({ title: title.trim(), description: description.trim(), priceInfo: priceInfo.trim(), contactUrl: contactUrl.trim(), slotsTotal });
+      } else {
+        await createCommissionRequest({ title: title.trim(), description: description.trim(), budget: budget.trim() });
+      }
+      onCreated?.();
+      onClose();
+    } catch (e: any) {
+      setError((e && e.message) || "Couldn't post that.");
+    } finally { setBusy(false); }
+  };
+
+  const fieldStyle: React.CSSProperties = { width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 480, maxWidth: "100%", maxHeight: "85vh", overflow: "auto", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>{kind === "listing" ? "New commission listing" : "New commission request"}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" maxLength={80} style={fieldStyle} />
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional)" rows={4} maxLength={2000}
+          style={{ ...fieldStyle, resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+        {kind === "listing" ? (
+          <>
+            <input value={priceInfo} onChange={(e) => setPriceInfo(e.target.value)} placeholder="Price info (e.g. busts from $25)" maxLength={200} style={fieldStyle} />
+            <input value={contactUrl} onChange={(e) => setContactUrl(e.target.value)} placeholder="Commission info link (Ko-fi, form, optional)" maxLength={300} style={fieldStyle} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <label style={{ color: t.muted, fontSize: 12, fontWeight: 700 }}>Slots open</label>
+              <input type="number" min={1} max={50} value={slotsTotal}
+                onChange={(e) => setSlotsTotal(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                style={{ width: 70, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", color: t.text, boxSizing: "border-box" }} />
+            </div>
+          </>
+        ) : (
+          <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (optional, e.g. $50-100)" maxLength={100} style={fieldStyle} />
+        )}
+        {error && <div style={{ color: t.error, fontSize: 13, marginTop: 4 }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+          <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
+          <button onClick={submit} disabled={busy} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800, opacity: busy ? 0.6 : 1 }}>{busy ? "Posting…" : "Post"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommissionStatusPill({ status, t }: any) {
+  const map: Record<string, { bg: string; fg: string; label: string }> = {
+    open: { bg: "rgba(63,145,66,.15)", fg: "#3f9142", label: "Open" },
+    waitlist: { bg: "rgba(201,154,46,.16)", fg: "#c99a2e", label: "Waitlist" },
+    closed: { bg: "rgba(130,130,130,.18)", fg: t.muted, label: "Closed" },
+    fulfilled: { bg: "rgba(63,145,66,.15)", fg: "#3f9142", label: "Fulfilled" },
+  };
+  const s = map[status] ?? map.closed;
+  return <span style={{ background: s.bg, color: s.fg, borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>{s.label}</span>;
+}
+
+function CommissionListingCard({ listing, t, mine, isMod, onChanged, goUser }: any) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const setStatus = (status: string) => {
+    setBusy(true);
+    updateCommissionListing(listing.id, { status: status as any }).then(onChanged).catch((e) => console.error("listing update failed", e)).finally(() => setBusy(false));
+  };
+  const bumpSlots = (delta: number) => {
+    const next = Math.max(0, Math.min(listing.slotsTotal, listing.slotsFilled + delta));
+    if (next === listing.slotsFilled) return;
+    setBusy(true);
+    updateCommissionListing(listing.id, { slotsFilled: next }).then(onChanged).catch((e) => console.error("listing update failed", e)).finally(() => setBusy(false));
+  };
+  const remove = () => {
+    setBusy(true);
+    deleteCommissionListing(listing.id).then(onChanged).catch((e) => { console.error("listing delete failed", e); setBusy(false); });
+  };
+
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span onClick={() => goUser(listing.artist)} style={{ color: t.heading, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{listing.artistDisplay}</span>
+        <CommissionStatusPill status={listing.status} t={t} />
+        <span style={{ color: t.muted, fontSize: 12, marginLeft: "auto" }}>{timeAgo(listing.createdAt)}</span>
+      </div>
+      <div style={{ color: t.text, fontSize: 16, fontWeight: 800, marginBottom: 4 }}>{listing.title}</div>
+      <div style={{ color: t.muted, fontSize: 13, marginBottom: 6 }}>{listing.slotsFilled} of {listing.slotsTotal} slots filled</div>
+      {listing.description && <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>{listing.description}</div>}
+      {listing.priceInfo && <div style={{ color: t.muted, fontSize: 13, marginBottom: 6 }}>{listing.priceInfo}</div>}
+      {listing.contactUrl && /^https:\/\//i.test(listing.contactUrl) && (
+        <a href={listing.contactUrl} target="_blank" rel="noopener noreferrer" style={{ color: t.link, fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none" }}>
+          Commission info <ExternalLink size={13} />
+        </a>
+      )}
+      {(mine || isMod) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
+          {mine && (
+            <>
+              <select value={listing.status} disabled={busy} onChange={(e) => setStatus(e.target.value)}
+                style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+                <option value="open">Open</option>
+                <option value="waitlist">Waitlist</option>
+                <option value="closed">Closed</option>
+              </select>
+              <button onClick={() => bumpSlots(-1)} disabled={busy || listing.slotsFilled <= 0} style={{ ...relBtn(t), padding: "5px 10px", fontSize: 12 }} title="One fewer slot filled"><ArrowDown size={13} /></button>
+              <button onClick={() => bumpSlots(1)} disabled={busy || listing.slotsFilled >= listing.slotsTotal} style={{ ...relBtn(t), padding: "5px 10px", fontSize: 12 }} title="One more slot filled"><ArrowUp size={13} /></button>
+            </>
+          )}
+          <button onClick={() => setConfirming(true)} disabled={busy} style={{ ...relBtn(t), padding: "5px 12px", fontSize: 12, color: t.error, marginLeft: mine ? 0 : "auto" }}>{mine ? "Delete" : "Remove"}</button>
+        </div>
+      )}
+      {confirming && <ConfirmDialog t={t} title={mine ? "Delete this listing?" : "Remove this listing?"} message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+    </div>
+  );
+}
+
+function CommissionRequestCard({ request, t, mine, isMod, onChanged, goUser }: any) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const setStatus = (status: string) => {
+    setBusy(true);
+    updateCommissionRequest(request.id, { status: status as any }).then(onChanged).catch((e) => console.error("request update failed", e)).finally(() => setBusy(false));
+  };
+  const remove = () => {
+    setBusy(true);
+    deleteCommissionRequest(request.id).then(onChanged).catch((e) => { console.error("request delete failed", e); setBusy(false); });
+  };
+
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span onClick={() => goUser(request.requester)} style={{ color: t.heading, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{request.requesterDisplay}</span>
+        <CommissionStatusPill status={request.status} t={t} />
+        <span style={{ color: t.muted, fontSize: 12, marginLeft: "auto" }}>{timeAgo(request.createdAt)}</span>
+      </div>
+      <div style={{ color: t.text, fontSize: 16, fontWeight: 800, marginBottom: 4 }}>{request.title}</div>
+      {request.budget && <div style={{ color: t.muted, fontSize: 13, marginBottom: 6 }}>Budget: {request.budget}</div>}
+      {request.description && <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>{request.description}</div>}
+      {(mine || isMod) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
+          {mine && (
+            <select value={request.status} disabled={busy} onChange={(e) => setStatus(e.target.value)}
+              style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+              <option value="open">Open</option>
+              <option value="fulfilled">Fulfilled</option>
+              <option value="closed">Closed</option>
+            </select>
+          )}
+          <button onClick={() => setConfirming(true)} disabled={busy} style={{ ...relBtn(t), padding: "5px 12px", fontSize: 12, color: t.error, marginLeft: mine ? 0 : "auto" }}>{mine ? "Delete" : "Remove"}</button>
+        </div>
+      )}
+      {confirming && <ConfirmDialog t={t} title={mine ? "Delete this request?" : "Remove this request?"} message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+    </div>
+  );
+}
+
+function CommissionsPage({ t, myUsername, myIsMod, goUser }: any) {
+  const [tab, setTab] = useState<"listings" | "requests">("listings");
+  const [listings, setListings] = useState<UiCommissionListing[]>([]);
+  const [requests, setRequests] = useState<UiCommissionRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([listCommissionListings(), listCommissionRequests()])
+      .then(([l, r]) => { setListings(l); setRequests(r); })
+      .catch((e) => console.error("commission board load failed", e))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { window.scrollTo(0, 0); load(); }, []);
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+      <div style={{ padding: "20px 0 4px" }}>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Commission Board</h1>
+        <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>Artists advertise open slots; members post what they're looking for.</div>
+      </div>
+      <div style={{ border: `1px solid ${t.border}`, background: t.panel2, borderRadius: 12, padding: "12px 16px", margin: "12px 0", color: t.muted, fontSize: 13, lineHeight: 1.6 }}>
+        <div style={{ color: t.text, fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Shield size={14} /> Community guidelines</div>
+        Agree on price and scope up front · Payment is handled off-site between you · No harassment over turnaround times · Mods may remove listings or requests that break the rules.
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0", flexWrap: "wrap" }}>
+        <button onClick={() => setTab("listings")} style={relBtn(t, tab === "listings")}>Artists open</button>
+        <button onClick={() => setTab("requests")} style={relBtn(t, tab === "requests")}>Requests</button>
+        {myUsername && (
+          <button onClick={() => setShowForm(true)} style={{ ...relBtn(t), marginLeft: "auto", background: t.accent, color: t.accentText, border: "none" }}>
+            <Plus size={14} /> {tab === "listings" ? "New listing" : "New request"}
+          </button>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : tab === "listings" ? (
+        listings.length === 0 ? (
+          <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No open commissions yet — be the first artist to post your slots.</div>
+        ) : listings.map((l) => <CommissionListingCard key={l.id} listing={l} t={t} mine={l.artist === myUsername} isMod={myIsMod} onChanged={load} goUser={goUser} />)
+      ) : requests.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No commission requests yet — post what you're looking for.</div>
+      ) : (
+        requests.map((r) => <CommissionRequestCard key={r.id} request={r} t={t} mine={r.requester === myUsername} isMod={myIsMod} onChanged={load} goUser={goUser} />)
+      )}
+      {showForm && <CommissionFormModal t={t} kind={tab === "listings" ? "listing" : "request"} onClose={() => setShowForm(false)} onCreated={load} />}
+    </div>
+  );
+}
+
+function CommissionsRoute() {
+  const c: any = useOutletContext();
+  useEffect(() => {
+    setPageMeta({ title: `Commission Board — ${community.name}`, description: "Artists advertise open commission slots; members post what they're looking for.", url: "/commissions", type: "website" });
+  }, []);
+  return <CommissionsPage t={c.t} myUsername={c.myUsername} myIsMod={c.myIsMod} goUser={c.goUser} />;
+}
+
 // ----- Auth gate + route table -----
 function centeredStyle(t: Palette): React.CSSProperties {
   return { minHeight: "100vh", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, system-ui, sans-serif" };
@@ -2338,6 +2573,7 @@ export default function AppRoutes() {
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
+        <Route path="commissions" element={<CommissionsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

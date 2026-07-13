@@ -6,7 +6,7 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview } from './types'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -1145,4 +1145,172 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     unlocked: 0,
     posts: (postsRes.data ?? []).map(mapPost),
   }
+}
+
+// ----- commission board (public listings; MILESTONES §9) -----
+
+const STATUS_RANK: Record<string, number> = { open: 0, waitlist: 1, fulfilled: 1, closed: 2 }
+
+function mapCommissionListing(r: Row): UiCommissionListing {
+  return {
+    id: r.id,
+    artistId: r.artist_id,
+    artist: r.artist?.username ?? 'unknown',
+    artistDisplay: r.artist?.display_name || r.artist?.username || 'unknown',
+    title: r.title,
+    description: r.description ?? '',
+    priceInfo: r.price_info ?? '',
+    contactUrl: r.contact_url ?? '',
+    slotsTotal: r.slots_total,
+    slotsFilled: r.slots_filled,
+    status: r.status,
+    createdAt: r.created_at,
+  }
+}
+
+const COMMISSION_LISTING_FIELDS =
+  'id, artist_id, title, description, price_info, contact_url, slots_total, slots_filled, status, created_at, artist:profiles!commission_listings_artist_id_fkey(username, display_name)'
+
+/** All commission listings, newest first with open/waitlist surfaced above closed. */
+export async function listCommissionListings(): Promise<UiCommissionListing[]> {
+  const { data, error } = await supabase
+    .from('commission_listings')
+    .select(COMMISSION_LISTING_FIELDS)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? [])
+    .map(mapCommissionListing)
+    .sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status])
+}
+
+/** Create a commission listing owned by the signed-in member. */
+export async function createCommissionListing(fields: {
+  title: string
+  description?: string
+  priceInfo?: string
+  contactUrl?: string
+  slotsTotal?: number
+}): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const title = fields.title.trim()
+  if (!title || title.length > 80) throw new Error('Titles are 1-80 characters')
+  const { data, error } = await supabase
+    .from('commission_listings')
+    .insert({
+      artist_id: me,
+      title,
+      description: (fields.description ?? '').trim(),
+      price_info: (fields.priceInfo ?? '').trim(),
+      contact_url: (fields.contactUrl ?? '').trim(),
+      slots_total: fields.slotsTotal ?? 1,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id
+}
+
+/** Update a commission listing the member owns. */
+export async function updateCommissionListing(
+  id: string,
+  patch: Partial<{
+    title: string
+    description: string
+    priceInfo: string
+    contactUrl: string
+    slotsTotal: number
+    slotsFilled: number
+    status: UiCommissionListing['status']
+  }>,
+): Promise<void> {
+  const row: Row = {}
+  if (patch.title !== undefined) row.title = patch.title.trim()
+  if (patch.description !== undefined) row.description = patch.description.trim()
+  if (patch.priceInfo !== undefined) row.price_info = patch.priceInfo.trim()
+  if (patch.contactUrl !== undefined) row.contact_url = patch.contactUrl.trim()
+  if (patch.slotsTotal !== undefined) row.slots_total = patch.slotsTotal
+  if (patch.slotsFilled !== undefined) row.slots_filled = patch.slotsFilled
+  if (patch.status !== undefined) row.status = patch.status
+  const { error } = await supabase.from('commission_listings').update(row).eq('id', id)
+  if (error) throw error
+}
+
+/** Delete a commission listing (own listing, or any listing if a mod). */
+export async function deleteCommissionListing(id: string): Promise<void> {
+  const { error } = await supabase.from('commission_listings').delete().eq('id', id)
+  if (error) throw error
+}
+
+function mapCommissionRequest(r: Row): UiCommissionRequest {
+  return {
+    id: r.id,
+    requesterId: r.requester_id,
+    requester: r.requester?.username ?? 'unknown',
+    requesterDisplay: r.requester?.display_name || r.requester?.username || 'unknown',
+    title: r.title,
+    description: r.description ?? '',
+    budget: r.budget ?? '',
+    status: r.status,
+    createdAt: r.created_at,
+  }
+}
+
+const COMMISSION_REQUEST_FIELDS =
+  'id, requester_id, title, description, budget, status, created_at, requester:profiles!commission_requests_requester_id_fkey(username, display_name)'
+
+/** All commission requests, newest first with open surfaced above fulfilled/closed. */
+export async function listCommissionRequests(): Promise<UiCommissionRequest[]> {
+  const { data, error } = await supabase
+    .from('commission_requests')
+    .select(COMMISSION_REQUEST_FIELDS)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? [])
+    .map(mapCommissionRequest)
+    .sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status])
+}
+
+/** Create a commission request owned by the signed-in member. */
+export async function createCommissionRequest(fields: {
+  title: string
+  description?: string
+  budget?: string
+}): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const title = fields.title.trim()
+  if (!title || title.length > 80) throw new Error('Titles are 1-80 characters')
+  const { data, error } = await supabase
+    .from('commission_requests')
+    .insert({
+      requester_id: me,
+      title,
+      description: (fields.description ?? '').trim(),
+      budget: (fields.budget ?? '').trim(),
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id
+}
+
+/** Update a commission request the member owns (status at minimum). */
+export async function updateCommissionRequest(
+  id: string,
+  patch: Partial<{ title: string; description: string; budget: string; status: UiCommissionRequest['status'] }>,
+): Promise<void> {
+  const row: Row = {}
+  if (patch.title !== undefined) row.title = patch.title.trim()
+  if (patch.description !== undefined) row.description = patch.description.trim()
+  if (patch.budget !== undefined) row.budget = patch.budget.trim()
+  if (patch.status !== undefined) row.status = patch.status
+  const { error } = await supabase.from('commission_requests').update(row).eq('id', id)
+  if (error) throw error
+}
+
+/** Delete a commission request (own request, or any request if a mod). */
+export async function deleteCommissionRequest(id: string): Promise<void> {
+  const { error } = await supabase.from('commission_requests').delete().eq('id', id)
+  if (error) throw error
 }

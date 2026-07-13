@@ -51,6 +51,35 @@ export interface UiUserPreview {
   isMod: boolean
 }
 
+// Commission board (MILESTONES §9): artists advertising open slots.
+export interface UiCommissionListing {
+  id: string
+  artistId: string
+  artist: string // username
+  artistDisplay: string
+  title: string
+  description: string
+  priceInfo: string
+  contactUrl: string
+  slotsTotal: number
+  slotsFilled: number
+  status: 'open' | 'waitlist' | 'closed'
+  createdAt: string
+}
+
+// Commission board: members posting requests for an artist.
+export interface UiCommissionRequest {
+  id: string
+  requesterId: string
+  requester: string // username
+  requesterDisplay: string
+  title: string
+  description: string
+  budget: string
+  status: 'open' | 'fulfilled' | 'closed'
+  createdAt: string
+}
+
 export interface UiProfile extends UiUserPreview {
   flairSlug: string | null // own member-flair slug, for the self-flair picker
   banner: string
