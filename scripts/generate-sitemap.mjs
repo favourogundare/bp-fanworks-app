@@ -35,10 +35,12 @@ const urls = [{ loc: SITE_URL + '/', priority: '1.0' }]
 if (url && anon) {
   try {
     const sb = createClient(url, anon)
-    const [posts, profiles] = await Promise.all([
+    const [posts, profiles, flairs] = await Promise.all([
       sb.from('posts').select('id, created_at').eq('surface', 'community').order('created_at', { ascending: false }).limit(5000),
       sb.from('profiles').select('username').limit(5000),
+      sb.from('flairs').select('slug').eq('scope', 'post'),
     ])
+    for (const f of flairs.data ?? []) urls.push({ loc: `${SITE_URL}/t/${encodeURIComponent(f.slug)}`, priority: '0.6' })
     for (const p of posts.data ?? []) urls.push({ loc: `${SITE_URL}/post/${p.id}`, lastmod: p.created_at, priority: '0.7' })
     for (const pr of profiles.data ?? []) urls.push({ loc: `${SITE_URL}/user/${encodeURIComponent(pr.username)}`, priority: '0.5' })
   } catch (e) {
