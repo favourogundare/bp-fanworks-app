@@ -29,3 +29,7 @@ npx supabase db push                   # apply it to the linked project
 
 Pushing to `develop` deploys the app (Vercel) and applies new migrations (Supabase
 GitHub integration).
+
+## Contributors
+
+- [@maricorper](https://github.com/maricorper)
