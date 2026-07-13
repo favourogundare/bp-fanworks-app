@@ -56,6 +56,7 @@ export async function createPost(input: {
   media?: string[]
   pollOptions?: string[]
   contentWarnings?: string[]
+  scheduledAt?: string | null
   surface?: 'community' | 'profile'
 }): Promise<string> {
   const me = await getMyProfileId()
@@ -71,6 +72,7 @@ export async function createPost(input: {
       media: input.media ?? [],
       poll_options: input.pollOptions ?? [],
       content_warnings: input.contentWarnings ?? [],
+      scheduled_at: input.scheduledAt ?? null,
     })
     .select('id')
     .single()
@@ -204,7 +206,7 @@ export async function submitReport(targetType: 'post' | 'comment', targetId: str
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, profile_pinned_at, locked_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
+  'id, title, body, type, pinned, profile_pinned_at, locked_at, scheduled_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -228,6 +230,7 @@ function mapPost(row: Row): UiPost {
     pinned: !!row.pinned,
     locked: !!row.locked_at,
     profilePinned: !!row.profile_pinned_at,
+    scheduledAt: row.scheduled_at ?? null,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
   }
