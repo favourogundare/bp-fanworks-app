@@ -1,7 +1,7 @@
 -- Moderation toolkit, slice 3 (MILESTONES §9): distinguish / sticky mod
 -- comments. A mod can mark their own comment as an official mod comment
 -- (distinguish), and pin a top-level one to the top of the thread (sticky —
--- which also distinguishes it, Reddit-style). Builds on 0026 (log_mod_action).
+-- which also distinguishes it, Reddit-style). Builds on 0027 (log_mod_action).
 -- Idempotent throughout, per DB health rules.
 
 alter table comments add column if not exists distinguished_at timestamptz;
