@@ -1421,6 +1421,10 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [display, setDisplay] = useState(profile.display);
   const [banner, setBanner] = useState(profile.banner);
   const [ao3, setAo3] = useState(profile.ao3 || "");
+  const [ao3Works, setAo3Works] = useState<string[]>(profile.ao3Works || []);
+  const setWork = (i: number, v: string) => setAo3Works((p) => p.map((x, j) => (j === i ? v : x)));
+  const addWork = () => setAo3Works((p) => [...p, ""]);
+  const removeWork = (i: number) => setAo3Works((p) => p.filter((_, j) => j !== i));
   const [kofi, setKofi] = useState(profile.kofi || "");
   const [flairSlug, setFlairSlug] = useState<string | null>(profile.flairSlug ?? null);
   const [blur, setBlur] = useState(profile.blurMedia);
@@ -1446,7 +1450,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const save = async () => {
     setErr("");
     if (!USERNAME_RE.test(username)) { setErr("Username must be 3-20 characters: letters, numbers, underscore."); return; }
-    for (const u of [ao3, kofi]) if (u && !/^https:\/\//i.test(u)) { setErr("Links must start with https://"); return; }
+    for (const u of [ao3, kofi, ...ao3Works]) if (u.trim() && !/^https:\/\//i.test(u.trim())) { setErr("Links must start with https://"); return; }
     setBusy(true);
     try {
       const patch: any = {};
@@ -1455,6 +1459,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (banner !== profile.banner) patch.banner = banner;
       if ((ao3 || null) !== profile.ao3) patch.ao3_url = ao3 || null;
       if ((kofi || null) !== profile.kofi) patch.kofi_url = kofi || null;
+      const cleanWorks = ao3Works.map((w) => w.trim()).filter(Boolean);
+      if (JSON.stringify(cleanWorks) !== JSON.stringify(profile.ao3Works || [])) patch.ao3_works = cleanWorks;
       if (blur !== profile.blurMedia) patch.blur_media = blur;
       if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
       if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
@@ -1504,6 +1510,14 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       </div>
       <label style={label}>AO3 LINK</label>
       <input style={field} placeholder="https://archiveofourown.org/users/…" value={ao3} onChange={(e) => setAo3(e.target.value)} />
+      <label style={label}>AO3 FEATURED WORKS</label>
+      {ao3Works.map((w, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+          <input style={{ ...field, flex: 1 }} placeholder="https://archiveofourown.org/works/…" value={w} onChange={(e) => setWork(i, e.target.value)} />
+          <button type="button" onClick={() => removeWork(i)} title="Remove" style={{ background: "none", border: `1px solid ${t.border}`, color: t.muted, borderRadius: 8, padding: "0 10px", cursor: "pointer" }}><X size={14} /></button>
+        </div>
+      ))}
+      <button type="button" onClick={addWork} style={{ background: "none", border: "none", color: t.link, cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>+ Add work</button>
       <label style={label}>KO-FI LINK</label>
       <input style={field} placeholder="https://ko-fi.com/…" value={kofi} onChange={(e) => setKofi(e.target.value)} />
       <label style={label}>MEMBER FLAIR</label>
@@ -1678,6 +1692,16 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
               <ExternalLink size={13} /> {name}
             </a>
           ))}
+          {(profile.ao3Works || []).filter((u: string) => /^https:\/\//i.test(u)).length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ color: t.muted, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, margin: "6px 0 4px" }}>FEATURED WORKS</div>
+              {(profile.ao3Works || []).filter((u: string) => /^https:\/\//i.test(u)).map((u: string, i: number) => (
+                <a key={i} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, color: t.accent, fontSize: 13, textDecoration: "none", marginBottom: 5 }}>
+                  <ExternalLink size={12} /> {u.replace(/^https:\/\/(www\.)?archiveofourown\.org\//i, "AO3: ").replace(/^https:\/\//i, "").slice(0, 48)}
+                </a>
+              ))}
+            </div>
+          )}
           <div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{profile.followers + followerDelta} followers</div>
           {profile.flair && <div style={{ color: t.muted, fontSize: 13, marginBottom: 14 }}>{profile.flair}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14, marginTop: 14 }}>
