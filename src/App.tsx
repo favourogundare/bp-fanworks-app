@@ -6,7 +6,7 @@ import {
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check,
 } from "lucide-react";
-import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
+import { Routes, Route, Navigate, Link, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
@@ -1163,7 +1163,7 @@ function ContinueReading({ t, bp }: any) {
   );
 }
 
-function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged }: any) {
+function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pager, pinned, loading, sort, onSort, following, myUsername, onChanged }: any) {
   const bp = useBreakpoint();
   return (
     <div style={contentGrid(bp)}>
@@ -1202,6 +1202,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
         ) : (
           posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} />)
         )}
+        {!loading && pager}
       </div>
       <div><CommunitySidebar t={t} /></div>
     </div>
@@ -1875,14 +1876,63 @@ function AppLayout() {
 }
 
 // ----- Routed pages (read URL params, load their own data) -----
+
+// Crawlable pagination for feed/tag lists (SEO §11 #4): "page 2" is a real URL
+// (?page=2) with canonical + rel prev/next, instead of scroll-only content.
+const FEED_PAGE_SIZE = 25;
+
+/** 1-based page number from ?page= (absent/garbage → 1). */
+function usePageParam(): number {
+  const [params] = useSearchParams();
+  const n = parseInt(params.get("page") ?? "1", 10);
+  return Number.isFinite(n) && n > 1 ? n : 1;
+}
+
+function pageUrl(basePath: string, n: number): string {
+  return n <= 1 ? basePath : `${basePath}?page=${n}`;
+}
+
+// ponytail: client-side slicing over the existing full fetch; move to server-side
+// .range() in api.ts when feeds outgrow a single query.
+function paginate(items: UiPost[], requested: number, basePath: string) {
+  const pages = Math.max(1, Math.ceil(items.length / FEED_PAGE_SIZE));
+  const page = Math.min(requested, pages); // out-of-range → last page, canonical follows
+  return {
+    items: items.slice((page - 1) * FEED_PAGE_SIZE, page * FEED_PAGE_SIZE),
+    page,
+    url: pageUrl(basePath, page),
+    prev: page > 1 ? pageUrl(basePath, page - 1) : null,
+    next: page < pages ? pageUrl(basePath, page + 1) : null,
+  };
+}
+
+/** Prev/next as real links so crawlers can reach every page. */
+function Pager({ t, page, prev, next }: any) {
+  if (!prev && !next) return null;
+  const link = { ...relBtn(t, false), textDecoration: "none" };
+  return (
+    <nav aria-label="Pages" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, padding: "16px 0" }}>
+      {prev && <Link to={prev} style={link}>← Previous</Link>}
+      <span style={{ color: t.muted, fontSize: 13 }}>Page {page}</span>
+      {next && <Link to={next} style={link}>Next →</Link>}
+    </nav>
+  );
+}
+
 function LandingRoute() {
   const c: any = useOutletContext();
-  useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
-  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
+  const requested = usePageParam();
+  const pg = paginate(c.feed, requested, "/");
+  useEffect(() => {
+    const suffix = pg.page > 1 ? ` (Page ${pg.page})` : "";
+    setPageMeta({ title: `${community.name} — Wakanda-first fan community${suffix}`, description: clip(community.blurb), url: pg.url, type: "website", prev: pg.prev, next: pg.next });
+  }, [pg.url, pg.prev, pg.next]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pg.page]);
+  return <LandingPage t={c.t} posts={pg.items} pager={<Pager t={c.t} page={pg.page} prev={pg.prev} next={pg.next} />} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
 }
 
 // Shared list layout for tag-filter and search-result pages.
-function PostListPage({ t, title, sub, action, posts, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
+function PostListPage({ t, title, sub, action, posts, pager, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
       <div style={{ padding: "20px 0 4px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -1899,6 +1949,7 @@ function PostListPage({ t, title, sub, action, posts, loading, mutedUsers, onOpe
       ) : (
         posts.map((p: UiPost) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} />)
       )}
+      {!loading && pager}
     </div>
   );
 }
@@ -1914,7 +1965,13 @@ function TagRoute() {
     fetchTagFeed(slug as string).then(setPosts).catch((e) => console.error("tag feed failed", e)).finally(() => setLoading(false));
   }, [slug]);
   const label = POST_FLAIRS[slug as string]?.label ?? slug;
-  useEffect(() => { setPageMeta({ title: `${label} — ${community.name}`, description: `${label} posts on ${community.name}.`, url: `/t/${slug}`, type: "website" }); }, [slug, label]);
+  const requested = usePageParam();
+  const pg = paginate(posts, requested, `/t/${slug}`);
+  useEffect(() => {
+    const suffix = pg.page > 1 ? ` (Page ${pg.page})` : "";
+    setPageMeta({ title: `${label} — ${community.name}${suffix}`, description: `${label} posts on ${community.name}.`, url: pg.url, type: "website", prev: pg.prev, next: pg.next });
+  }, [slug, label, pg.url, pg.prev, pg.next]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pg.page]);
   const followed = c.followedTags?.includes(slug);
   const toggleFollow = () => {
     toggleTagFollow(slug as string, !followed).then(() => c.refreshFollowedTags?.()).catch((e) => console.error("follow toggle failed", e));
@@ -1930,7 +1987,7 @@ function TagRoute() {
       </button>
     </div>
   );
-  return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
+  return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={pg.items} pager={<Pager t={t} page={pg.page} prev={pg.prev} next={pg.next} />} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
 }
 
 function CollectionRoute() {
