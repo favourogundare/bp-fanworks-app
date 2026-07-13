@@ -11,8 +11,8 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
-import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights } from "./lib/api";
+import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { timeAgo } from "./lib/time";
@@ -196,6 +196,56 @@ function ConfirmDialog({ t, title, message, confirmLabel = "Delete", onConfirm, 
           <button onClick={onClose} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 16px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Cancel</button>
           <button onClick={onConfirm} disabled={busy} style={{ background: "#e0726b", color: "#1a0b0b", border: "none", borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, fontSize: 13, opacity: busy ? 0.6 : 1 }}>{busy ? "Deleting…" : confirmLabel}</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Creator insights modal (MILESTONES §7, v1): engagement counts for the
+// author's own post, from existing data only — votes and comments. Opens from
+// the "See More Insights" link, which PostCard renders only for the author;
+// fetchMyPostInsights re-checks authorship data-side and returns null otherwise.
+function PostInsightsDialog({ t, post, onClose }: any) {
+  const [insights, setInsights] = useState<PostInsights | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    fetchMyPostInsights(post.id)
+      .then((data) => { if (alive) setInsights(data); })
+      .catch((e) => console.error("post insights failed", e))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [post.id]);
+
+  const tile = (label: string, value: number, icon: React.ReactNode) => (
+    <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: t.muted, fontSize: 12, fontWeight: 700 }}>{icon} {label}</div>
+      <div style={{ color: t.text, fontSize: 22, fontWeight: 800, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, width: 400, maxWidth: "100%", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <BarChart3 size={16} color={t.accent} />
+          <h3 style={{ color: t.text, margin: 0, fontSize: 16, fontWeight: 800, flex: 1 }}>Post insights</h3>
+          <button onClick={onClose} aria-label="Close insights" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><X size={16} /></button>
+        </div>
+        <p style={{ color: t.muted, fontSize: 13, margin: "0 0 14px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{post.title}</p>
+        {loading ? (
+          <div style={{ color: t.muted, fontSize: 13, padding: "18px 0" }}>Loading insights…</div>
+        ) : !insights ? (
+          <div style={{ color: t.muted, fontSize: 13, padding: "18px 0" }}>Couldn't load insights — they're only available for your own posts.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {tile("Score", insights.score, <BarChart3 size={13} />)}
+            {tile("Comments", insights.commentCount, <MessageCircle size={13} />)}
+            {tile("Upvotes", insights.upvotes, <ArrowUp size={13} />)}
+            {tile("Downvotes", insights.downvotes, <ArrowDown size={13} />)}
+          </div>
+        )}
+        <p style={{ color: t.muted, fontSize: 12, lineHeight: 1.5, margin: "14px 0 0" }}>Only you can see this. Views and save counts aren't tracked yet.</p>
       </div>
     </div>
   );
@@ -774,6 +824,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const [body, setBody] = useState(post.body);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
   const [saved, toggleSave] = useSaved("post", post.id);
   const hoverHandlers = useUsernameHoverCard(post.author);
@@ -881,11 +932,12 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 10, color: t.muted, fontSize: 13 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Eye size={15} /> {post.views || "—"} views</span>
-            <span style={{ color: t.link, fontWeight: 700, cursor: "pointer" }}>See More Insights</span>
+            {mine && <span onClick={() => setInsightsOpen(true)} style={{ color: t.link, fontWeight: 700, cursor: "pointer" }}>See More Insights</span>}
           </div>
         </>
       )}
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+      {insightsOpen && <PostInsightsDialog t={t} post={post} onClose={() => setInsightsOpen(false)} />}
     </div>
   );
 }

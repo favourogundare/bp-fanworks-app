@@ -191,6 +191,49 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
   }
 }
 
+// ----- creator post insights (MILESTONES §7 "Post analytics for creators", v1) -----
+
+export type PostInsights = {
+  score: number
+  upvotes: number
+  downvotes: number
+  commentCount: number
+}
+
+/**
+ * Aggregate engagement for ONE of the caller's own posts, read entirely from
+ * already-public data (votes and comments are world-readable) — no migration,
+ * no new tables. Returns null unless the signed-in member authored the post:
+ * the numbers aren't secret, but insights are a creator-only surface, so the
+ * author check lives here and not just in the UI. Save counts can't join v1 —
+ * saved_items RLS (0011) is saver-private, so counting them needs a definer
+ * RPC (deferred to v2 along with view tracking).
+ */
+export async function fetchMyPostInsights(postId: string): Promise<PostInsights | null> {
+  const me = await getMyProfileId()
+  if (!me) return null
+  const { data: post } = await supabase
+    .from('posts')
+    .select('author_id, vote_score, comments(count)')
+    .eq('id', postId)
+    .maybeSingle()
+  if (!post || post.author_id !== me) return null
+
+  const countVotes = (value: number) =>
+    supabase
+      .from('votes')
+      .select('*', { count: 'exact', head: true })
+      .match({ target_type: 'post', target_id: postId, value })
+  const [up, down] = await Promise.all([countVotes(1), countVotes(-1)])
+
+  return {
+    score: post.vote_score ?? 0,
+    upvotes: up.count ?? 0,
+    downvotes: down.count ?? 0,
+    commentCount: (post as Row).comments?.[0]?.count ?? 0,
+  }
+}
+
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
