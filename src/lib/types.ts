@@ -31,6 +31,7 @@ export interface UiPost {
   warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
   locked: boolean // comments locked by a mod; DB policy blocks non-mod comments
+  profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
 }
@@ -55,6 +56,7 @@ export interface UiUserPreview {
 
 export interface UiProfile extends UiUserPreview {
   banned: boolean // banned from the community (mods see a chip; DB blocks their posts/comments)
+  flairSlug: string | null // own member-flair slug, for the self-flair picker
   banner: string
   avatarUrl: string | null
   ao3: string | null // AO3 profile link
@@ -63,6 +65,7 @@ export interface UiProfile extends UiUserPreview {
   spoilerFree: boolean // spoiler-free mode toggle
   spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
   mutedTags: string[] // flair slugs muted everywhere (independent of spoiler mode)
+  usernameChangedAt: string | null // last username change; 30-day cooldown anchor
   followers: number
   karma: string
   contributions: number
