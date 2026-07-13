@@ -19,8 +19,8 @@ import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned, modSetCommentDistinguished, modSetCommentSticky } from "./lib/mod";
-import type { UiModAction, UiReport, ReportTargetPreview } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned, modSetCommentDistinguished, modSetCommentSticky, fetchSavedResponses, createSavedResponse, deleteSavedResponse } from "./lib/mod";
+import type { UiModAction, UiReport, ReportTargetPreview, UiSavedResponse } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
 import { goldPair, neutralPair } from "./lib/palettes";
@@ -1289,6 +1289,12 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [reason, setReason] = useState("");
+  const [responses, setResponses] = useState<UiSavedResponse[]>([]);
+  const openRemove = () => {
+    const next = !removing;
+    setRemoving(next);
+    if (next && responses.length === 0) fetchSavedResponses().then(setResponses).catch((e) => console.error("responses load failed", e));
+  };
   const run = async (fn: any) => { setBusy(true); try { await fn(); } catch (e) { console.error("mod action failed", e); } finally { setBusy(false); } };
   const toggle = (k: string) => setSel((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   return (
@@ -1297,11 +1303,19 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
       <button onClick={() => run(async () => { await modSetPinned(post.id, !post.pinned); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Pin size={13} /> {post.pinned ? "Unpin" : "Pin"}</button>
       <button onClick={() => run(async () => { await modSetLocked(post.id, !post.locked); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Lock size={13} /> {post.locked ? "Unlock comments" : "Lock comments"}</button>
       <button onClick={() => setReflair(!reflair)} style={modBtn(t)}>Re-flair</button>
-      <button onClick={() => setRemoving(!removing)} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      <button onClick={openRemove} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
       <button onClick={() => navigate("/mod/reports")} style={modBtn(t)}>Reports</button>
       <button onClick={() => navigate("/mod/log")} style={modBtn(t)}>Log</button>
+      <button onClick={() => navigate("/mod/responses")} style={modBtn(t)}>Responses</button>
       {removing && (
         <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+          {responses.length > 0 && (
+            <select onChange={(e) => { const r = responses.find((x) => x.id === e.target.value); if (r) setReason(r.body); e.target.selectedIndex = 0; }}
+              title="Insert a saved response" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "7px 8px", fontSize: 12 }}>
+              <option value="">Saved…</option>
+              {responses.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+            </select>
+          )}
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Removal reason (recorded in the mod log)"
             style={{ flex: 1, background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "7px 10px", fontSize: 13, outline: "none" }} />
           <button onClick={() => run(async () => { await modRemovePost(post.id, reason.trim()); onRemoved?.(); })} disabled={busy}
@@ -2113,6 +2127,60 @@ function SearchRoute() {
   return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
 }
 
+// Mod-only saved-responses manager (/mod/responses): canned replies the team
+// reuses in removal reasons / report notes.
+function ModResponsesRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<UiSavedResponse[]>([]);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [err, setErr] = useState("");
+  const load = () => fetchSavedResponses().then(setRows).catch((e) => console.error("responses load failed", e));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); setPageMeta({ title: `Saved responses — ${community.name}` }); if (c.myIsMod) load(); }, []);
+  if (!c.myIsMod) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Mods only.</div>;
+  const add = () => {
+    if (!title.trim() || !body.trim()) { setErr("Title and body required."); return; }
+    setErr("");
+    createSavedResponse(title, body).then((r) => { setRows((p) => [r, ...p]); setTitle(""); setBody(""); }).catch((e) => setErr(e?.message || "Save failed."));
+  };
+  const remove = (id: string) => { deleteSavedResponse(id).then(() => setRows((p) => p.filter((x) => x.id !== id))).catch((e) => console.error("delete failed", e)); };
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ padding: "20px 0 4px", display: "flex", alignItems: "center", gap: 10 }}>
+        <Shield size={20} color={t.accent} />
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Saved responses</h1>
+        <button onClick={() => navigate(-1)} style={{ ...relBtn(t), marginLeft: "auto", padding: "5px 14px", fontSize: 12 }}>Back</button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, margin: "10px 0" }}>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (e.g. Rule 3: source your art)"
+          style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none" }} />
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Response body" rows={3}
+          style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", resize: "vertical" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={add} style={{ ...relBtn(t), background: t.accent, color: t.accentText, padding: "6px 16px", fontSize: 13, fontWeight: 800 }}>Add response</button>
+          {err && <span style={{ color: "#e0726b", fontSize: 12 }}>{err}</span>}
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "16px 0" }}>No saved responses yet.</div>
+      ) : (
+        rows.map((r) => (
+          <div key={r.id} style={{ borderBottom: `1px solid ${t.border}`, padding: "12px 0" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+              <span style={{ color: t.heading, fontSize: 14, fontWeight: 700 }}>{r.title}</span>
+              <button onClick={() => remove(r.id)} style={{ ...relBtn(t), marginLeft: "auto", padding: "3px 10px", fontSize: 12, color: "#e0726b" }}>Delete</button>
+            </div>
+            <div style={{ color: t.muted, fontSize: 13, marginTop: 4, whiteSpace: "pre-wrap" }}>{r.body}</div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 // Mod-only audit log (/mod/log): who did what, when, why.
 function ModLogRoute() {
   const c: any = useOutletContext();
@@ -2594,6 +2662,7 @@ export default function AppRoutes() {
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
         <Route path="mod/log" element={<ModLogRoute />} />
+        <Route path="mod/responses" element={<ModResponsesRoute />} />
         <Route path="mod/reports" element={<ModReportsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
