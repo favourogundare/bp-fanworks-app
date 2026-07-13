@@ -230,7 +230,9 @@ function ContentWarningGate({ warnings, t, children }: any) {
   );
 }
 
-function MediaBlock({ post, t }: any) {
+// `eager` marks likely-LCP media (first feed card, post-detail hero): loads
+// immediately at high priority. Everything else lazy-loads (CWV, SEO §11 #5).
+function MediaBlock({ post, t, eager }: any) {
   // Descriptive alt for search/social indexing: "Art by goldjaguar_art: ..."
   const mediaKind = POST_FLAIRS[(post.flairs || [])[0]]?.label ?? "Post media";
   const [revealed, setRevealed] = useState(false);
@@ -251,10 +253,12 @@ function MediaBlock({ post, t }: any) {
     );
   }
   return (
-    <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+    // ponytail: minHeight reserves space so late-loading media doesn't shift the
+    // feed (CLS); exact per-image dims would need width/height stored at upload.
+    <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8, minHeight: 200 }} onClick={(e) => e.stopPropagation()}>
       {urls.map((u: string, i: number) => isVideo(u)
-        ? <video key={i} src={u} controls muted aria-label={`${mediaKind} video by ${post.author}: ${post.title}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
-        : <img key={i} src={u} alt={`${mediaKind} by ${post.author}: ${post.title}${urls.length > 1 ? ` (${i + 1} of ${urls.length})` : ""}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
+        ? <video key={i} src={u} controls muted preload={eager ? "metadata" : "none"} aria-label={`${mediaKind} video by ${post.author}: ${post.title}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
+        : <img key={i} src={u} loading={eager && i === 0 ? "eager" : "lazy"} decoding="async" fetchPriority={eager && i === 0 ? "high" : undefined} alt={`${mediaKind} by ${post.author}: ${post.title}${urls.length > 1 ? ` (${i + 1} of ${urls.length})` : ""}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
     </div>
   );
 }
@@ -701,7 +705,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
 }
 
 // ----- Post card -----
-function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged, canPin }: any) {
+function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged, canPin, eager }: any) {
   const [followed, toggleFollowed] = usePostFollow(post.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -797,7 +801,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         <ContentWarningGate warnings={post.warnings} t={t}>
           <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
           {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-          <MediaBlock post={post} t={t} />
+          <MediaBlock post={post} t={t} eager={eager} />
         </ContentWarningGate>
       </div>
       )}
@@ -1169,7 +1173,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
     <div style={contentGrid(bp)}>
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "20px 0" }}>
-          <img src="/bpf-home.png" alt={community.name}
+          <img src="/bpf-home.png" alt={community.name} fetchPriority="high"
             style={{ width: 72, height: 72, borderRadius: "50%", border: `2px solid ${t.accent}`, objectFit: "cover", flexShrink: 0, display: "block" }} />
           <h1 style={{ color: t.heading, fontSize: bp === "phone" ? 24 : 34, fontWeight: 800, margin: 0, letterSpacing: 0.3 }}>{community.name}</h1>
         </div>
@@ -1200,7 +1204,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
         ) : posts.length === 0 ? (
           <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{following ? "No posts in tags you follow yet. Open a tag and hit Follow." : "No posts yet. Be the first to post!"}</div>
         ) : (
-          posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} />)
+          posts.map((p, i) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} eager={i === 0} />)
         )}
       </div>
       <div><CommunitySidebar t={t} /></div>
@@ -1393,7 +1397,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             : { color: t.text, fontSize: 15 }}>{renderRichText(post.body, t)}</div>}
           {post.type === "poll" && <PollBlock post={post} t={t} />}
           {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-          <MediaBlock post={post} t={t} />
+          <MediaBlock post={post} t={t} eager />
         </ContentWarningGate>
         </>
         )}
@@ -1897,7 +1901,7 @@ function PostListPage({ t, title, sub, action, posts, loading, mutedUsers, onOpe
       ) : posts.length === 0 ? (
         <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{emptyText}</div>
       ) : (
-        posts.map((p: UiPost) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} />)
+        posts.map((p: UiPost, i: number) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} eager={i === 0} />)
       )}
     </div>
   );
