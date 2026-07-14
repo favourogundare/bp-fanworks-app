@@ -14,10 +14,15 @@ import { next } from '@vercel/edge'
 // Only these routes need rich previews. Everything else — assets, /search,
 // /saved, /t/:slug — never invokes the middleware and is served normally.
 export const config = {
-  matcher: ['/', '/post/:id', '/user/:username'],
+  matcher: ['/', '/post/:id', '/user/:username', '/t/:slug'],
 }
 
 const SITE = 'Black Panther Fanworks'
+
+// Canonical/OG URLs always point at production: building them from the request
+// origin would emit *.vercel.app canonicals on preview deploys and split
+// search-index signals across hosts.
+const CANONICAL_ORIGIN = 'https://blackpantherfanworks.com'
 
 const COMMUNITY = {
   name: SITE,
@@ -116,7 +121,7 @@ function breadcrumbNode(origin: string, crumb?: { name: string; url: string }): 
 
 /** Look up per-route data and build the meta, or null if the route/row is unknown. */
 async function buildMeta(url: URL): Promise<Meta | null> {
-  const origin = url.origin
+  const origin = CANONICAL_ORIGIN
   const defaultImage = `${origin}/bpf-home.png`
   const path = url.pathname
 
@@ -209,6 +214,36 @@ async function buildMeta(url: URL): Promise<Meta | null> {
           },
         },
         breadcrumbNode(origin, { name: display, url: profileUrl }),
+      ],
+    }
+  }
+
+  const tagMatch = path.match(/^\/t\/([^/]+)\/?$/)
+  if (tagMatch) {
+    const slug = decodeURIComponent(tagMatch[1])
+    const rows = await restGet(
+      `flairs?slug=eq.${encodeURIComponent(slug)}&scope=eq.post&select=slug,label&limit=1`,
+    )
+    const flair = rows?.[0]
+    if (!flair) return null
+    const label = String(flair.label || slug)
+    const tagUrl = `${origin}/t/${encodeURIComponent(String(flair.slug))}`
+    return {
+      title: `${label} — ${SITE}`,
+      description: `${label} posts on ${SITE}.`,
+      image: defaultImage,
+      url: tagUrl,
+      type: 'website',
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          '@id': tagUrl,
+          url: tagUrl,
+          name: `${label} — ${SITE}`,
+          isPartOf: websiteNode(origin),
+        },
+        breadcrumbNode(origin, { name: label, url: tagUrl }),
       ],
     }
   }

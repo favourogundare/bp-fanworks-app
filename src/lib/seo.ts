@@ -6,6 +6,11 @@
 const SITE = 'Black Panther Fanworks'
 const DEFAULT_IMAGE = '/bpf-home.png'
 
+// Canonical URLs must always point at the production host: built from
+// window.location.origin they'd emit *.vercel.app (or localhost) canonicals on
+// preview deploys, splitting search-index signals across hosts.
+const CANONICAL_ORIGIN = 'https://blackpantherfanworks.com'
+
 type PageMeta = {
   title: string
   description?: string
@@ -52,9 +57,9 @@ export function clip(s: string, n = 160): string {
 
 function absolute(u: string): string {
   try {
-    return new URL(u, window.location.origin).toString()
+    return new URL(u, CANONICAL_ORIGIN).toString()
   } catch {
-    return window.location.origin + '/'
+    return CANONICAL_ORIGIN + '/'
   }
 }
 
