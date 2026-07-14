@@ -398,6 +398,71 @@ function detectFanworkPlatform(raw: string): PlatformHit | null {
   return null;
 }
 
+// Soundtrack/music-platform link chips — same client-side chip pattern as the
+// fanwork platforms above (no metadata fetching, no backend). Deliberately a
+// chip and NOT an iframe player embed: embeds load third-party pages (and
+// their trackers) into every viewer's browser on render, and Bandcamp's embed
+// isn't even derivable from the URL without fetching. The detail is only what
+// the URL itself says (type + slug), so we never claim a title we don't know.
+const SOUNDCLOUD_RESERVED = new Set(["discover", "search", "stream", "upload", "charts", "feed", "you", "library", "messages", "notifications", "settings", "pages", "tags", "popular", "jobs", "imprint", "terms-of-use"]);
+const BANDCAMP_RESERVED_SUBS = new Set(["www", "daily", "blog", "get", "help", "bandcamp"]);
+const deslug = (s: string) => s.replace(/-/g, " ");
+
+function detectMusicPlatform(raw: string): PlatformHit | null {
+  let u: URL;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const segs = u.pathname.split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
+
+  if (host === "open.spotify.com") {
+    const p = /^intl-/.test(segs[0] ?? "") ? segs.slice(1) : segs; // strip locale prefix (/intl-de/...)
+    let detail;
+    // Spotify ids are opaque base62 — the type is all the URL honestly tells us.
+    if (p[0] === "track" && p[1]) detail = "Track";
+    else if (p[0] === "album" && p[1]) detail = "Album";
+    else if (p[0] === "playlist" && p[1]) detail = "Playlist";
+    else if (p[0] === "artist" && p[1]) detail = "Artist";
+    return { label: "Spotify", icon: "🎧", detail };
+  }
+  if (host === "music.apple.com") {
+    const p = /^[a-z]{2}$/.test(segs[0] ?? "") ? segs.slice(1) : segs; // strip storefront (/us/...)
+    let detail;
+    if (p[0] === "album" && p[1]) detail = u.searchParams.has("i") ? `Song · ${deslug(p[1])}` : `Album · ${deslug(p[1])}`;
+    else if (p[0] === "song" && p[1]) detail = `Song · ${deslug(p[1])}`;
+    else if (p[0] === "playlist" && p[1]) detail = `Playlist · ${deslug(p[1])}`;
+    else if (p[0] === "artist" && p[1]) detail = `Artist · ${deslug(p[1])}`;
+    return { label: "Apple Music", icon: "🎵", detail };
+  }
+  if (host === "music.youtube.com") {
+    let detail;
+    if (segs[0] === "watch" && u.searchParams.get("v")) detail = "Track";
+    else if (segs[0] === "playlist" && u.searchParams.get("list")) detail = "Playlist";
+    return { label: "YouTube Music", icon: "🎶", detail };
+  }
+  if (host === "soundcloud.com" || host === "on.soundcloud.com") {
+    let detail;
+    // on.soundcloud.com short links are opaque; soundcloud.com/{artist}/{track}.
+    if (host === "soundcloud.com" && segs[0] && !SOUNDCLOUD_RESERVED.has(segs[0])) {
+      if (segs[1] === "sets") detail = segs[2] ? `Playlist · ${deslug(segs[2])}` : `@${segs[0]}`;
+      else if (segs[1]) detail = `@${segs[0]} · ${deslug(segs[1])}`;
+      else detail = `@${segs[0]}`;
+    }
+    return { label: "SoundCloud", icon: "☁️", detail };
+  }
+  if (host === "bandcamp.com" || host.endsWith(".bandcamp.com")) {
+    const sub = host.endsWith(".bandcamp.com") ? host.slice(0, -".bandcamp.com".length) : "";
+    // Only single-level artist subdomains name an artist (mirrors the Tumblr guard).
+    const artist = sub && !BANDCAMP_RESERVED_SUBS.has(sub) && !sub.includes(".") ? sub : "";
+    let detail;
+    if (artist && segs[0] === "track" && segs[1]) detail = `@${artist} · ${deslug(segs[1])}`;
+    else if (artist && segs[0] === "album" && segs[1]) detail = `Album · ${deslug(segs[1])}`;
+    else if (artist) detail = `@${artist}`;
+    return { label: "Bandcamp", icon: "💿", detail };
+  }
+  return null;
+}
+
 // Known-platform URL rendered as a compact chip: icon + platform + parsed
 // detail. Full URL kept in the title tooltip; stopPropagation so clicking a
 // chip inside a comment doesn't toggle thread collapse.
@@ -436,7 +501,7 @@ function InlineImage({ src, t }: { src: string; t: any }) {
 }
 
 // Turn a plain-text run into nodes: allowlisted image URLs -> inline images,
-// known fanwork-platform URLs -> platform chips, other bare https URLs ->
+// known fanwork- or music-platform URLs -> platform chips, other bare https URLs ->
 // clickable links, everything else stays text. Used for the plain segments
 // inside the rich-text renderer below so embeds work anywhere body text appears.
 function linkify(text: string, t: any, kp: string): React.ReactNode[] {
@@ -448,7 +513,7 @@ function linkify(text: string, t: any, kp: string): React.ReactNode[] {
     const trail = part.match(/[.,;:!?)\]}'"]+$/)?.[0] ?? "";
     const url = trail ? part.slice(0, part.length - trail.length) : part;
     const isImage = isAllowlistedImageUrl(url);
-    const platform = isImage ? null : detectFanworkPlatform(url); // images stay the InlineImage path
+    const platform = isImage ? null : detectFanworkPlatform(url) ?? detectMusicPlatform(url); // images stay the InlineImage path; fanwork chips first, then music
     out.push(isImage
       ? <InlineImage key={`${kp}-lk${i}`} src={url} t={t} />
       : platform
