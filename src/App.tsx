@@ -52,6 +52,8 @@ const community = {
     { label: "Wiki", pinnedMatch: /lore megathread/i },
     { label: "Fanfic Archive", to: "/t/fanfiction" },
     { label: "Weekly Self-Promo Thread", pinnedMatch: /self-promo/i },
+    // Cross-link back to the source fiction (MILESTONES §12). External, opens in a new tab.
+    { label: "Read the fiction on tjadaka.com", href: "https://tjadaka.com", external: true },
   ],
   rules: [
     { title: "Source All Artwork and Scans", desc: "All fanart, cosplay photos, or music must clearly credit the original artist or creator in the post title or a comment. If you are the creator, you may tag it as [OC]." },
@@ -888,11 +890,21 @@ function CommunitySidebar({ t }) {
       </div>
       <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>COMMUNITY BOOKMARKS</div>
       {community.bookmarks.map((b) => {
+        const pill = { display: "block", background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center" as const, color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, textDecoration: "none" };
+        // External bookmarks (e.g. the tjadaka.com cross-link) open in a new tab.
+        if (b.external) {
+          return (
+            <a key={b.label} href={b.href} target="_blank" rel="noopener noreferrer"
+              style={{ ...pill, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              {b.label} <ExternalLink size={13} />
+            </a>
+          );
+        }
         const to = bookmarkPath(b);
         return (
           <a key={b.label} href={to ?? undefined}
             onClick={(e) => { e.preventDefault(); if (to) navigate(to); }}
-            style={{ display: "block", background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: to ? "pointer" : "default", textDecoration: "none" }}>
+            style={{ ...pill, cursor: to ? "pointer" : "default" }}>
             {b.label}
           </a>
         );
