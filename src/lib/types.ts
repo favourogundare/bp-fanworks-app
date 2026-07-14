@@ -41,6 +41,17 @@ export interface UiPinned {
   comments: number
 }
 
+// A community-sidebar bookmark. Targets either an internal route (`route`) or a
+// pinned post matched by title regex (`pinnedMatch`) — never a hardcoded post
+// id. Exactly one of route/pinnedMatch is set. Mod-editable (see 0029).
+export interface UiBookmark {
+  id: string
+  label: string
+  route: string | null
+  pinnedMatch: string | null // regex source, matched case-insensitively
+  position: number
+}
+
 // Lean fields for the username hover card — a subset of UiProfile that a
 // preview needs, without a full profile-page fetch (posts, follower counts).
 export interface UiUserPreview {
