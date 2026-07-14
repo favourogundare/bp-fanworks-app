@@ -1086,6 +1086,7 @@ export async function updateMyProfile(fields: {
   avatar_url?: string
   ao3_url?: string | null
   kofi_url?: string | null
+  ao3_works?: string[]
   blur_media?: boolean
   spoiler_free?: boolean
   spoiler_tags?: string[]
@@ -1184,7 +1185,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -1216,6 +1217,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     banner: p.banner || '',
     avatarUrl: p.avatar_url ?? null,
     ao3: p.ao3_url ?? null,
+    ao3Works: p.ao3_works ?? [],
     kofi: p.kofi_url ?? null,
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
