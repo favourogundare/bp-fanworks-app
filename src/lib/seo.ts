@@ -13,6 +13,9 @@ type PageMeta = {
   /** Path or absolute URL; defaults to the current path. */
   url?: string
   type?: 'website' | 'article' | 'profile'
+  /** Paginated views: neighbour page URLs for rel="prev"/"next" links. */
+  prev?: string | null
+  next?: string | null
 }
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
@@ -25,8 +28,14 @@ function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
   el.setAttribute('content', content)
 }
 
-function upsertLink(rel: string, href: string) {
+function upsertLink(rel: string, href: string | null | undefined) {
   let el = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
+  if (!href) {
+    // Remove rather than leave a stale link when a page has no such neighbour
+    // (e.g. navigating from /?page=2 to an unpaginated route).
+    el?.remove()
+    return
+  }
   if (!el) {
     el = document.createElement('link')
     el.setAttribute('rel', rel)
@@ -50,13 +59,15 @@ function absolute(u: string): string {
 }
 
 /** Set the document title + canonical + OG/Twitter tags for the current route. */
-export function setPageMeta({ title, description, image, url, type = 'website' }: PageMeta) {
+export function setPageMeta({ title, description, image, url, type = 'website', prev, next }: PageMeta) {
   document.title = title
   const canonical = absolute(url ?? window.location.pathname)
   const img = absolute(image ?? DEFAULT_IMAGE)
 
   if (description) upsertMeta('name', 'description', description)
   upsertLink('canonical', canonical)
+  upsertLink('prev', prev ? absolute(prev) : null)
+  upsertLink('next', next ? absolute(next) : null)
 
   upsertMeta('property', 'og:site_name', SITE)
   upsertMeta('property', 'og:title', title)
