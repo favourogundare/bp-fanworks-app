@@ -29,6 +29,7 @@ export interface UiPost {
   warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
   profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
+  archived: boolean // author-archived: hidden from feeds/tags/search, direct link still works
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
 }
@@ -85,11 +86,13 @@ export interface UiProfile extends UiUserPreview {
   banner: string
   avatarUrl: string | null
   ao3: string | null // AO3 profile link
+  ao3Works: string[] // featured AO3 work URLs
   kofi: string | null // Ko-fi link
   blurMedia: boolean // personal pref: blur NSFW/spoiler media
   spoilerFree: boolean // spoiler-free mode toggle
   spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
   mutedTags: string[] // flair slugs muted everywhere (independent of spoiler mode)
+  profileTheme: string | null // preset slug for the profile-page accent theme (see PROFILE_THEMES)
   usernameChangedAt: string | null // last username change; 30-day cooldown anchor
   followers: number
   karma: string

@@ -6,6 +6,7 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
+import { PROFILE_THEMES } from './palettes'
 import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -190,10 +191,53 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
   }
 }
 
+// ----- creator post insights (MILESTONES §7 "Post analytics for creators", v1) -----
+
+export type PostInsights = {
+  score: number
+  upvotes: number
+  downvotes: number
+  commentCount: number
+}
+
+/**
+ * Aggregate engagement for ONE of the caller's own posts, read entirely from
+ * already-public data (votes and comments are world-readable) — no migration,
+ * no new tables. Returns null unless the signed-in member authored the post:
+ * the numbers aren't secret, but insights are a creator-only surface, so the
+ * author check lives here and not just in the UI. Save counts can't join v1 —
+ * saved_items RLS (0011) is saver-private, so counting them needs a definer
+ * RPC (deferred to v2 along with view tracking).
+ */
+export async function fetchMyPostInsights(postId: string): Promise<PostInsights | null> {
+  const me = await getMyProfileId()
+  if (!me) return null
+  const { data: post } = await supabase
+    .from('posts')
+    .select('author_id, vote_score, comments(count)')
+    .eq('id', postId)
+    .maybeSingle()
+  if (!post || post.author_id !== me) return null
+
+  const countVotes = (value: number) =>
+    supabase
+      .from('votes')
+      .select('*', { count: 'exact', head: true })
+      .match({ target_type: 'post', target_id: postId, value })
+  const [up, down] = await Promise.all([countVotes(1), countVotes(-1)])
+
+  return {
+    score: post.vote_score ?? 0,
+    upvotes: up.count ?? 0,
+    downvotes: down.count ?? 0,
+    commentCount: (post as Row).comments?.[0]?.count ?? 0,
+  }
+}
+
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
+  'id, title, body, type, pinned, profile_pinned_at, archived_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -216,6 +260,7 @@ function mapPost(row: Row): UiPost {
     warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
     profilePinned: !!row.profile_pinned_at,
+    archived: !!row.archived_at,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
   }
@@ -307,6 +352,7 @@ export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost
     .select(POST_FIELDS)
     .eq('surface', 'community')
     .eq('pinned', false)
+    .is('archived_at', null)
   if (sort === 'top') q.order('vote_score', { ascending: false }).order('created_at', { ascending: false })
   else q.order('created_at', { ascending: false }) // 'new' and 'hot' both start newest-first
   const { data, error } = await q
@@ -326,6 +372,7 @@ export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
     .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
     .eq('flairs.slug', slug)
     .eq('post.surface', 'community')
+    .is('post.archived_at', null)
   if (error) throw error
   return (data ?? [])
     .map((r: Row) => r.post)
@@ -381,6 +428,7 @@ export async function fetchFollowedFeed(): Promise<UiPost[]> {
           .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
           .in('flairs.slug', slugs)
           .eq('post.surface', 'community')
+          .is('post.archived_at', null)
       : Promise.resolve({ data: [] as Row[], error: null }),
     listIds.length
       ? // List posts are included regardless of surface — a list is a
@@ -389,6 +437,7 @@ export async function fetchFollowedFeed(): Promise<UiPost[]> {
           .from('collection_items')
           .select(`collection_id, post:posts!inner(${POST_FIELDS})`)
           .in('collection_id', listIds)
+          .is('post.archived_at', null)
       : Promise.resolve({ data: [] as Row[], error: null }),
   ])
   if (tagRes.error) throw tagRes.error
@@ -488,6 +537,34 @@ export async function setProfilePin(postId: string, on: boolean): Promise<void> 
   if (error) throw error
 }
 
+// ----- post archive / vault (MILESTONES §4) -----
+
+/** Archive (on=true) or unarchive one of your own posts. Archived posts drop
+ *  out of feeds/tags/search but stay reachable by direct link. Same RLS path
+ *  as setProfilePin: posts_update_own limits this to the author's rows. */
+export async function setPostArchived(postId: string, on: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ archived_at: on ? new Date().toISOString() : null })
+    .eq('id', postId)
+  if (error) throw error
+}
+
+/** The signed-in member's archived posts (both surfaces), newest archive first.
+ *  Backs the owner-only "Archived" tab on their profile. */
+export async function fetchMyArchivedPosts(): Promise<UiPost[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('author_id', me)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
 // ----- reading lists / collections (public, followable; MILESTONES §6) -----
 
 export interface UiCollection {
@@ -540,6 +617,7 @@ export async function fetchCollectionPosts(id: string): Promise<UiPost[]> {
     .from('posts')
     .select(`${POST_FIELDS}, collection_items!inner(collection_id)`)
     .eq('collection_items.collection_id', id)
+    .is('archived_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map(mapPost)
@@ -844,6 +922,7 @@ export async function searchPosts(query: string): Promise<UiPost[]> {
     .from('posts')
     .select(POST_FIELDS)
     .eq('surface', 'community')
+    .is('archived_at', null)
     .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
     .order('created_at', { ascending: false }) // ponytail: recency order; ts_rank needs an RPC if relevance ordering matters later
     .limit(50)
@@ -858,6 +937,7 @@ export async function fetchPinned(): Promise<UiPinned[]> {
     .select('id, title, vote_score, comments(count)')
     .eq('surface', 'community')
     .eq('pinned', true)
+    .is('archived_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map((r: Row) => ({
@@ -1006,10 +1086,12 @@ export async function updateMyProfile(fields: {
   avatar_url?: string
   ao3_url?: string | null
   kofi_url?: string | null
+  ao3_works?: string[]
   blur_media?: boolean
   spoiler_free?: boolean
   spoiler_tags?: string[]
   muted_tags?: string[]
+  profile_theme?: string | null
 }): Promise<void> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -1019,6 +1101,9 @@ export async function updateMyProfile(fields: {
   // javascript:/data: URLs at the trust boundary.
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
+  // Presets only — mirrors the profiles_profile_theme_check constraint (0027).
+  if (fields.profile_theme != null && !PROFILE_THEMES[fields.profile_theme])
+    throw new Error('Unknown profile theme')
   // Username changes go through the change_username RPC: the direct column
   // grant was revoked in 0025 so the 30-day cooldown is enforced in the DB.
   const { username, ...rest } = fields
@@ -1100,7 +1185,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, username_changed_at`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -1112,6 +1197,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .select(POST_FIELDS)
       .eq('author_id', p.id)
       .eq('surface', 'profile')
+      .is('archived_at', null)
       .order('profile_pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }),
     supabase
@@ -1131,11 +1217,13 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     banner: p.banner || '',
     avatarUrl: p.avatar_url ?? null,
     ao3: p.ao3_url ?? null,
+    ao3Works: p.ao3_works ?? [],
     kofi: p.kofi_url ?? null,
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
     mutedTags: p.muted_tags ?? [],
+    profileTheme: p.profile_theme ?? null,
     usernameChangedAt: p.username_changed_at ?? null,
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
