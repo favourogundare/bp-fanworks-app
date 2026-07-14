@@ -4,16 +4,16 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check, History, Lock, LockOpen, Trash2,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import type { UiPost, UiPinned, UiProfile, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
@@ -49,7 +49,7 @@ const community = {
   // Bookmarks link to a route (`to`) or to a pinned post matched by title
   // (`pinnedMatch`) so we never hardcode post ids.
   bookmarks: [
-    { label: "Wiki", pinnedMatch: /lore megathread/i },
+    { label: "Wiki", to: "/wiki" },
     { label: "Fanfic Archive", to: "/t/fanfiction" },
     { label: "Weekly Self-Promo Thread", pinnedMatch: /self-promo/i },
   ],
@@ -2285,6 +2285,269 @@ function MemberRoute() {
   return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} onSavedProfile={onSavedProfile} myUsername={c.myUsername} />;
 }
 
+// ----- Community wiki (MILESTONES §9: collaborative pages + revisions) -----
+function wikiSlugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+}
+
+// Shared title + toolbar + body + summary editor, used for both new pages and edits.
+function WikiEditor({ t, initialTitle, initialBody, onCancel, onSaved, slug }: any) {
+  const [title, setTitle] = useState(initialTitle ?? "");
+  const [body, setBody] = useState(initialBody ?? "");
+  const [summary, setSummary] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  const save = async () => {
+    if (!title.trim()) { setError("Give the page a title."); return; }
+    setBusy(true); setError(null);
+    try {
+      await saveWikiPage({ slug, title: title.trim(), body, summary: summary.trim() });
+      onSaved();
+    } catch (e: any) {
+      setError((e && e.message) || "Couldn't save the page.");
+      setBusy(false);
+    }
+  };
+
+  const field: React.CSSProperties = { width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", marginBottom: 10 };
+  return (
+    <div>
+      <div style={{ color: t.muted, fontSize: 12, marginBottom: 8 }}>Editing <span style={{ fontFamily: "monospace" }}>/wiki/{slug}</span></div>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Page title" maxLength={120} style={{ ...field, fontSize: 18, fontWeight: 800 }} />
+      <FmtToolbar taRef={bodyRef} value={body} onChange={setBody} t={t} />
+      <textarea ref={bodyRef} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write the page… (markdown supported)" rows={16}
+        style={{ ...field, resize: "vertical", fontFamily: "inherit", fontSize: 15, lineHeight: 1.6 }} />
+      <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Edit summary (optional, e.g. 'fixed timeline')" maxLength={200} style={{ ...field, fontSize: 13 }} />
+      {error && <div style={{ color: t.error, fontSize: 13, marginBottom: 8 }}>{error}</div>}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={save} disabled={busy} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800, opacity: busy ? 0.6 : 1 }}>{busy ? "Saving…" : "Save page"}</button>
+        <button onClick={onCancel} disabled={busy} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function NewWikiPageModal({ t, onClose, onGo }: any) {
+  const [title, setTitle] = useState("");
+  const [slug, setSlug] = useState("");
+  const [touched, setTouched] = useState(false);
+  const finalSlug = touched ? slug : wikiSlugify(title);
+  const field: React.CSSProperties = { width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", marginBottom: 10 };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 440, maxWidth: "100%", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>New wiki page</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (e.g. Shuri — Character Bio)" maxLength={120} style={field} />
+        <input value={finalSlug} onChange={(e) => { setTouched(true); setSlug(wikiSlugify(e.target.value) || e.target.value.toLowerCase()); }} placeholder="slug" maxLength={60} style={{ ...field, fontFamily: "monospace", fontSize: 13 }} />
+        <div style={{ color: t.muted, fontSize: 12, marginTop: -4, marginBottom: 10 }}>Lives at /wiki/{finalSlug || "…"}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
+          <button onClick={() => { if (title.trim() && /^[a-z0-9][a-z0-9-]{0,59}$/.test(finalSlug)) onGo(finalSlug, title.trim()); }}
+            style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800 }}>Start page</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WikiIndexRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const navigate = useNavigate();
+  const [pages, setPages] = useState<UiWikiPageMeta[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("");
+  const [showNew, setShowNew] = useState(false);
+
+  useEffect(() => { window.scrollTo(0, 0); listWikiPages().then(setPages).catch((e) => console.error("wiki index failed", e)).finally(() => setLoading(false)); }, []);
+  useEffect(() => { setPageMeta({ title: `Community Wiki — ${community.name}`, description: `Character bios, ship manifestos, and lore for ${community.name}.`, url: "/wiki", type: "website" }); }, []);
+  const shown = pages.filter((p) => p.title.toLowerCase().includes(filter.trim().toLowerCase()));
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, padding: "20px 0 12px" }}>
+        <div>
+          <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Community Wiki</h1>
+          <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>Character bios, ship manifestos, lore deep-dives, and resources — maintained by the community.</div>
+        </div>
+        {c.myUsername && <button onClick={() => setShowNew(true)} style={{ ...relBtn(t), background: t.accent, color: t.accentText, border: "none" }}><Plus size={14} /> New page</button>}
+      </div>
+      {pages.length > 6 && (
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter pages…"
+          style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", color: t.text, boxSizing: "border-box", marginBottom: 12 }} />
+      )}
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : shown.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{pages.length === 0 ? "No wiki pages yet — start the first one." : "No pages match that filter."}</div>
+      ) : (
+        shown.map((p) => (
+          <div key={p.slug} onClick={() => navigate(`/wiki/${p.slug}`)} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+            <BookOpen size={18} color={t.muted} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: t.text, fontSize: 16, fontWeight: 700 }}>{p.title}</div>
+              <div style={{ color: t.muted, fontSize: 12, marginTop: 2 }}>Updated {timeAgo(p.updatedAt)}{p.updatedBy ? ` by ${p.updatedBy}` : ""}</div>
+            </div>
+            {p.editLocked && <Lock size={14} color={t.muted} />}
+          </div>
+        ))
+      )}
+      {showNew && <NewWikiPageModal t={t} onClose={() => setShowNew(false)} onGo={(slug: string, title: string) => navigate(`/wiki/${slug}`, { state: { newTitle: title } })} />}
+    </div>
+  );
+}
+
+function WikiPageRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const { slug } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const newTitle = (location.state as any)?.newTitle as string | undefined;
+  const [page, setPage] = useState<UiWikiPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetchWikiPage(slug as string)
+      .then((p) => { setPage(p); if (!p && newTitle) setEditing(true); })
+      .catch((e) => console.error("wiki page failed", e))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); setEditing(false); load(); }, [slug]);
+  useEffect(() => {
+    setPageMeta({ title: `${page ? page.title : slug} — Wiki — ${community.name}`, description: page ? (clip(page.body) || `A wiki page on ${community.name}.`) : `Wiki page on ${community.name}.`, url: `/wiki/${slug}`, type: "article" });
+  }, [page, slug]);
+
+  const canEdit = !!c.myUsername && (!page || !page.editLocked || c.myIsMod);
+
+  if (loading) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Loading…</div>;
+
+  if (editing) {
+    return (
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "20px 16px 24px" }}>
+        <WikiEditor t={t} slug={slug} initialTitle={page?.title ?? newTitle ?? ""} initialBody={page?.body ?? ""}
+          onCancel={() => { setEditing(false); if (!page) navigate("/wiki"); }} onSaved={() => { setEditing(false); load(); }} />
+      </div>
+    );
+  }
+
+  if (!page) {
+    return (
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", textAlign: "center" }}>
+        <div style={{ color: t.text, fontSize: 18, fontWeight: 800, marginBottom: 6 }}>This page doesn't exist yet</div>
+        <div style={{ color: t.muted, fontSize: 14, marginBottom: 16 }}><span style={{ fontFamily: "monospace" }}>/wiki/{slug}</span> is empty.</div>
+        {c.myUsername
+          ? <button onClick={() => setEditing(true)} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "9px 22px", cursor: "pointer", fontWeight: 800 }}>Create this page</button>
+          : <button onClick={() => navigate("/wiki")} style={{ ...relBtn(t) }}>Back to wiki</button>}
+      </div>
+    );
+  }
+
+  const toggleLock = () => {
+    setBusy(true);
+    setWikiLock(page.slug, !page.editLocked).then(load).catch((e) => console.error("wiki lock failed", e)).finally(() => setBusy(false));
+  };
+  const remove = () => {
+    setBusy(true);
+    deleteWikiPage(page.slug).then(() => navigate("/wiki")).catch((e) => { console.error("wiki delete failed", e); setBusy(false); setConfirming(false); });
+  };
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "20px 16px 24px" }}>
+      <div style={{ color: t.muted, fontSize: 12, marginBottom: 6 }}><span onClick={() => navigate("/wiki")} style={{ cursor: "pointer" }}>Wiki</span> / {page.slug}</div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <h1 style={{ color: t.heading, fontSize: 26, fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>{page.title}{page.editLocked && <Lock size={18} color={t.muted} />}</h1>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {canEdit && <button onClick={() => setEditing(true)} style={relBtn(t)}><Pencil size={14} /> Edit</button>}
+          <button onClick={() => navigate(`/wiki/${page.slug}/history`)} style={relBtn(t)}><History size={14} /> History</button>
+          {c.myIsMod && <button onClick={toggleLock} disabled={busy} style={relBtn(t, page.editLocked)}>{page.editLocked ? <LockOpen size={14} /> : <Lock size={14} />} {page.editLocked ? "Unlock" : "Lock"}</button>}
+          {c.myIsMod && <button onClick={() => setConfirming(true)} disabled={busy} style={{ ...relBtn(t), color: t.error }}><Trash2 size={14} /> Delete</button>}
+        </div>
+      </div>
+      <div style={{ color: t.muted, fontSize: 12, margin: "6px 0 18px" }}>
+        Last edited {timeAgo(page.updatedAt)}{page.updatedBy ? ` by ${page.updatedBy}` : ""}{page.editLocked ? " · locked to moderators" : ""}
+      </div>
+      {page.body.trim()
+        ? <div style={{ color: t.text, fontSize: 15, lineHeight: 1.7 }}>{renderRichText(page.body, t)}</div>
+        : <div style={{ color: t.muted, fontSize: 14, fontStyle: "italic" }}>This page has no content yet.{canEdit ? " Click Edit to add some." : ""}</div>}
+      {confirming && <ConfirmDialog t={t} title="Delete this wiki page?" message="The page and its full history will be removed. This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+    </div>
+  );
+}
+
+function WikiHistoryRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const { slug } = useParams();
+  const navigate = useNavigate();
+  const [page, setPage] = useState<UiWikiPage | null>(null);
+  const [revs, setRevs] = useState<UiWikiRevision[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetchWikiPage(slug as string)
+      .then(async (p) => { setPage(p); setRevs(p ? await fetchWikiRevisions(p.id) : []); })
+      .catch((e) => console.error("wiki history failed", e))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); load(); }, [slug]);
+  useEffect(() => { setPageMeta({ title: `History: ${page ? page.title : slug} — Wiki — ${community.name}`, description: `Revision history for the ${slug} wiki page.`, url: `/wiki/${slug}/history`, type: "website" }); }, [page, slug]);
+
+  const canEdit = !!c.myUsername && (!page || !page.editLocked || c.myIsMod);
+  const restore = (rev: UiWikiRevision) => {
+    if (!page) return;
+    setBusy(true);
+    saveWikiPage({ slug: page.slug, title: rev.title, body: rev.body, summary: `Restored version from ${timeAgo(rev.createdAt)}` })
+      .then(() => navigate(`/wiki/${page.slug}`))
+      .catch((e) => { console.error("wiki restore failed", e); setBusy(false); });
+  };
+
+  if (loading) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Loading…</div>;
+  if (!page) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>This page doesn't exist.</div>;
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "20px 16px 24px" }}>
+      <div style={{ color: t.muted, fontSize: 12, marginBottom: 6 }}><span onClick={() => navigate("/wiki")} style={{ cursor: "pointer" }}>Wiki</span> / <span onClick={() => navigate(`/wiki/${page.slug}`)} style={{ cursor: "pointer" }}>{page.slug}</span> / history</div>
+      <h1 style={{ color: t.heading, fontSize: 22, fontWeight: 800, margin: "0 0 4px" }}>History: {page.title}</h1>
+      <div style={{ color: t.muted, fontSize: 13, marginBottom: 18 }}>{revs.length} revision{revs.length === 1 ? "" : "s"}, newest first.</div>
+      {revs.map((r, i) => (
+        <div key={r.id} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ color: t.text, fontSize: 13, fontWeight: 700 }}>{r.editor ?? "unknown"}</span>
+            <span style={{ color: t.muted, fontSize: 12 }}>{timeAgo(r.createdAt)}</span>
+            {i === 0 && <span style={{ background: t.pill, color: t.pillText, borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>current</span>}
+            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button onClick={() => setOpen(open === r.id ? null : r.id)} style={{ ...relBtn(t), padding: "4px 10px", fontSize: 12 }}>{open === r.id ? "Hide" : "Preview"}</button>
+              {canEdit && i !== 0 && <button onClick={() => restore(r)} disabled={busy} style={{ ...relBtn(t), padding: "4px 10px", fontSize: 12 }}>Restore</button>}
+            </span>
+          </div>
+          {r.summary && <div style={{ color: t.muted, fontSize: 12, marginTop: 6, fontStyle: "italic" }}>{r.summary}</div>}
+          {open === r.id && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${t.border}` }}>
+              <div style={{ color: t.text, fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{r.title}</div>
+              <div style={{ color: t.text, fontSize: 14, lineHeight: 1.6 }}>{r.body.trim() ? renderRichText(r.body, t) : <span style={{ color: t.muted, fontStyle: "italic" }}>(empty)</span>}</div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ----- Auth gate + route table -----
 function centeredStyle(t: Palette): React.CSSProperties {
   return { minHeight: "100vh", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, system-ui, sans-serif" };
@@ -2338,6 +2601,9 @@ export default function AppRoutes() {
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
+        <Route path="wiki" element={<WikiIndexRoute />} />
+        <Route path="wiki/:slug" element={<WikiPageRoute />} />
+        <Route path="wiki/:slug/history" element={<WikiHistoryRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
