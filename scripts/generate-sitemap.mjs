@@ -36,7 +36,7 @@ if (url && anon) {
   try {
     const sb = createClient(url, anon)
     const [posts, profiles] = await Promise.all([
-      sb.from('posts').select('id, created_at').eq('surface', 'community').order('created_at', { ascending: false }).limit(5000),
+      sb.from('posts').select('id, created_at').eq('surface', 'community').is('archived_at', null).order('created_at', { ascending: false }).limit(5000),
       sb.from('profiles').select('username').limit(5000),
     ])
     for (const p of posts.data ?? []) urls.push({ loc: `${SITE_URL}/post/${p.id}`, lastmod: p.created_at, priority: '0.7' })

@@ -6,7 +6,8 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
+import { PROFILE_THEMES } from './palettes'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -57,6 +58,7 @@ export async function createPost(input: {
   pollOptions?: string[]
   contentWarnings?: string[]
   surface?: 'community' | 'profile'
+  circleId?: string | null // post into a circle; null/undefined = General feed
 }): Promise<string> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -71,6 +73,7 @@ export async function createPost(input: {
       media: input.media ?? [],
       poll_options: input.pollOptions ?? [],
       content_warnings: input.contentWarnings ?? [],
+      circle_id: input.circleId ?? null,
     })
     .select('id')
     .single()
@@ -190,11 +193,54 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
   }
 }
 
+// ----- creator post insights (MILESTONES §7 "Post analytics for creators", v1) -----
+
+export type PostInsights = {
+  score: number
+  upvotes: number
+  downvotes: number
+  commentCount: number
+}
+
+/**
+ * Aggregate engagement for ONE of the caller's own posts, read entirely from
+ * already-public data (votes and comments are world-readable) — no migration,
+ * no new tables. Returns null unless the signed-in member authored the post:
+ * the numbers aren't secret, but insights are a creator-only surface, so the
+ * author check lives here and not just in the UI. Save counts can't join v1 —
+ * saved_items RLS (0011) is saver-private, so counting them needs a definer
+ * RPC (deferred to v2 along with view tracking).
+ */
+export async function fetchMyPostInsights(postId: string): Promise<PostInsights | null> {
+  const me = await getMyProfileId()
+  if (!me) return null
+  const { data: post } = await supabase
+    .from('posts')
+    .select('author_id, vote_score, comments(count)')
+    .eq('id', postId)
+    .maybeSingle()
+  if (!post || post.author_id !== me) return null
+
+  const countVotes = (value: number) =>
+    supabase
+      .from('votes')
+      .select('*', { count: 'exact', head: true })
+      .match({ target_type: 'post', target_id: postId, value })
+  const [up, down] = await Promise.all([countVotes(1), countVotes(-1)])
+
+  return {
+    score: post.vote_score ?? 0,
+    upvotes: up.count ?? 0,
+    downvotes: down.count ?? 0,
+    commentCount: (post as Row).comments?.[0]?.count ?? 0,
+  }
+}
+
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
-  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
+  'id, title, body, type, pinned, profile_pinned_at, archived_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
+  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count), circle:circles(slug, name)'
 
 function mapPost(row: Row): UiPost {
   return {
@@ -216,8 +262,10 @@ function mapPost(row: Row): UiPost {
     warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
     profilePinned: !!row.profile_pinned_at,
+    archived: !!row.archived_at,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
+    circle: row.circle ? { slug: row.circle.slug, name: row.circle.name } : null,
   }
 }
 
@@ -307,6 +355,8 @@ export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost
     .select(POST_FIELDS)
     .eq('surface', 'community')
     .eq('pinned', false)
+    .is('circle_id', null) // circle posts live in their circle, not the General feed
+    .is('archived_at', null)
   if (sort === 'top') q.order('vote_score', { ascending: false }).order('created_at', { ascending: false })
   else q.order('created_at', { ascending: false }) // 'new' and 'hot' both start newest-first
   const { data, error } = await q
@@ -326,6 +376,7 @@ export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
     .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
     .eq('flairs.slug', slug)
     .eq('post.surface', 'community')
+    .is('post.archived_at', null)
   if (error) throw error
   return (data ?? [])
     .map((r: Row) => r.post)
@@ -381,6 +432,7 @@ export async function fetchFollowedFeed(): Promise<UiPost[]> {
           .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
           .in('flairs.slug', slugs)
           .eq('post.surface', 'community')
+          .is('post.archived_at', null)
       : Promise.resolve({ data: [] as Row[], error: null }),
     listIds.length
       ? // List posts are included regardless of surface — a list is a
@@ -389,6 +441,7 @@ export async function fetchFollowedFeed(): Promise<UiPost[]> {
           .from('collection_items')
           .select(`collection_id, post:posts!inner(${POST_FIELDS})`)
           .in('collection_id', listIds)
+          .is('post.archived_at', null)
       : Promise.resolve({ data: [] as Row[], error: null }),
   ])
   if (tagRes.error) throw tagRes.error
@@ -488,6 +541,34 @@ export async function setProfilePin(postId: string, on: boolean): Promise<void> 
   if (error) throw error
 }
 
+// ----- post archive / vault (MILESTONES §4) -----
+
+/** Archive (on=true) or unarchive one of your own posts. Archived posts drop
+ *  out of feeds/tags/search but stay reachable by direct link. Same RLS path
+ *  as setProfilePin: posts_update_own limits this to the author's rows. */
+export async function setPostArchived(postId: string, on: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ archived_at: on ? new Date().toISOString() : null })
+    .eq('id', postId)
+  if (error) throw error
+}
+
+/** The signed-in member's archived posts (both surfaces), newest archive first.
+ *  Backs the owner-only "Archived" tab on their profile. */
+export async function fetchMyArchivedPosts(): Promise<UiPost[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('author_id', me)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
 // ----- reading lists / collections (public, followable; MILESTONES §6) -----
 
 export interface UiCollection {
@@ -540,6 +621,7 @@ export async function fetchCollectionPosts(id: string): Promise<UiPost[]> {
     .from('posts')
     .select(`${POST_FIELDS}, collection_items!inner(collection_id)`)
     .eq('collection_items.collection_id', id)
+    .is('archived_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map(mapPost)
@@ -844,6 +926,7 @@ export async function searchPosts(query: string): Promise<UiPost[]> {
     .from('posts')
     .select(POST_FIELDS)
     .eq('surface', 'community')
+    .is('archived_at', null)
     .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
     .order('created_at', { ascending: false }) // ponytail: recency order; ts_rank needs an RPC if relevance ordering matters later
     .limit(50)
@@ -852,12 +935,30 @@ export async function searchPosts(query: string): Promise<UiPost[]> {
 }
 
 /** Pinned "Community highlights" cards. */
+/** Community-sidebar bookmarks, ordered for display. Public read (RLS). */
+export async function fetchSidebarBookmarks(): Promise<UiBookmark[]> {
+  const { data, error } = await supabase
+    .from('sidebar_bookmarks')
+    .select('id, label, route, pinned_match, position')
+    .order('position', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map((r: Row) => ({
+    id: r.id,
+    label: r.label,
+    route: r.route ?? null,
+    pinnedMatch: r.pinned_match ?? null,
+    position: r.position,
+  }))
+}
+
 export async function fetchPinned(): Promise<UiPinned[]> {
   const { data, error } = await supabase
     .from('posts')
     .select('id, title, vote_score, comments(count)')
     .eq('surface', 'community')
     .eq('pinned', true)
+    .is('circle_id', null)
+    .is('archived_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map((r: Row) => ({
@@ -1006,10 +1107,12 @@ export async function updateMyProfile(fields: {
   avatar_url?: string
   ao3_url?: string | null
   kofi_url?: string | null
+  ao3_works?: string[]
   blur_media?: boolean
   spoiler_free?: boolean
   spoiler_tags?: string[]
   muted_tags?: string[]
+  profile_theme?: string | null
 }): Promise<void> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -1019,6 +1122,9 @@ export async function updateMyProfile(fields: {
   // javascript:/data: URLs at the trust boundary.
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
+  // Presets only — mirrors the profiles_profile_theme_check constraint (0027).
+  if (fields.profile_theme != null && !PROFILE_THEMES[fields.profile_theme])
+    throw new Error('Unknown profile theme')
   // Username changes go through the change_username RPC: the direct column
   // grant was revoked in 0025 so the 30-day cooldown is enforced in the DB.
   const { username, ...rest } = fields
@@ -1100,7 +1206,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, username_changed_at`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -1112,6 +1218,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .select(POST_FIELDS)
       .eq('author_id', p.id)
       .eq('surface', 'profile')
+      .is('archived_at', null)
       .order('profile_pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }),
     supabase
@@ -1131,11 +1238,13 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     banner: p.banner || '',
     avatarUrl: p.avatar_url ?? null,
     ao3: p.ao3_url ?? null,
+    ao3Works: p.ao3_works ?? [],
     kofi: p.kofi_url ?? null,
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
     mutedTags: p.muted_tags ?? [],
+    profileTheme: p.profile_theme ?? null,
     usernameChangedAt: p.username_changed_at ?? null,
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),
@@ -1145,6 +1254,269 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     unlocked: 0,
     posts: (postsRes.data ?? []).map(mapPost),
   }
+}
+
+// ----- circles (public sub-communities; MILESTONES §9 Phase 1) -----
+
+const CIRCLE_FIELDS = 'id, slug, name, description, creator_id, created_at, circle_members(count)'
+
+function mapCircle(r: Row, mine: Set<string>): UiCircle {
+  return {
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    description: r.description ?? '',
+    creatorId: r.creator_id,
+    members: r.circle_members?.[0]?.count ?? 0,
+    joined: mine.has(r.id),
+    createdAt: r.created_at,
+  }
+}
+
+// ----- commission board (public listings; MILESTONES §9) -----
+
+const STATUS_RANK: Record<string, number> = { open: 0, waitlist: 1, fulfilled: 1, closed: 2 }
+
+function mapCommissionListing(r: Row): UiCommissionListing {
+  return {
+    id: r.id,
+    artistId: r.artist_id,
+    artist: r.artist?.username ?? 'unknown',
+    artistDisplay: r.artist?.display_name || r.artist?.username || 'unknown',
+    title: r.title,
+    description: r.description ?? '',
+    priceInfo: r.price_info ?? '',
+    contactUrl: r.contact_url ?? '',
+    slotsTotal: r.slots_total,
+    slotsFilled: r.slots_filled,
+    status: r.status,
+    createdAt: r.created_at,
+  }
+}
+
+/** The signed-in member's circle ids (empty set when signed out). */
+async function myCircleIds(): Promise<Set<string>> {
+  const me = await getMyProfileId()
+  if (!me) return new Set()
+  const { data, error } = await supabase
+    .from('circle_members')
+    .select('circle_id')
+    .eq('profile_id', me)
+  if (error) throw error
+  return new Set((data ?? []).map((r: Row) => r.circle_id))
+}
+
+/** All circles for the /circles directory, biggest first. */
+export async function listCircles(): Promise<UiCircle[]> {
+  const [{ data, error }, mine] = await Promise.all([
+    supabase.from('circles').select(CIRCLE_FIELDS),
+    myCircleIds(),
+  ])
+  if (error) throw error
+  return (data ?? [])
+    .map((r: Row) => mapCircle(r, mine))
+    .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name))
+}
+
+/** One circle by slug, or null. */
+export async function fetchCircle(slug: string): Promise<UiCircle | null> {
+  const [{ data, error }, mine] = await Promise.all([
+    supabase.from('circles').select(CIRCLE_FIELDS).eq('slug', slug).maybeSingle(),
+    myCircleIds(),
+  ])
+  if (error) throw error
+  return data ? mapCircle(data, mine) : null
+}
+
+/** Create a circle via the spam-guarded RPC; returns the new circle id. */
+export async function createCircle(input: { slug: string; name: string; description?: string }): Promise<string> {
+  const { data, error } = await supabase.rpc('create_circle', {
+    p_slug: input.slug.trim(),
+    p_name: input.name.trim(),
+    p_description: (input.description ?? '').trim(),
+  })
+  if (error) throw error
+  return data as string
+}
+
+/** Join a circle as the signed-in member. */
+export async function joinCircle(circleId: string): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('circle_members')
+    .insert({ circle_id: circleId, profile_id: me })
+  if (error && error.code !== '23505') throw error // already joined = fine
+}
+
+/** Leave a circle. */
+export async function leaveCircle(circleId: string): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('circle_members')
+    .delete()
+    .eq('circle_id', circleId)
+    .eq('profile_id', me)
+  if (error) throw error
+}
+
+/** Posts inside one circle, newest first. */
+export async function fetchCircleFeed(circleId: string): Promise<UiPost[]> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('circle_id', circleId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
+const COMMISSION_LISTING_FIELDS =
+  'id, artist_id, title, description, price_info, contact_url, slots_total, slots_filled, status, created_at, artist:profiles!commission_listings_artist_id_fkey(username, display_name)'
+
+/** All commission listings, newest first with open/waitlist surfaced above closed. */
+export async function listCommissionListings(): Promise<UiCommissionListing[]> {
+  const { data, error } = await supabase
+    .from('commission_listings')
+    .select(COMMISSION_LISTING_FIELDS)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? [])
+    .map(mapCommissionListing)
+    .sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status])
+}
+
+/** Create a commission listing owned by the signed-in member. */
+export async function createCommissionListing(fields: {
+  title: string
+  description?: string
+  priceInfo?: string
+  contactUrl?: string
+  slotsTotal?: number
+}): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const title = fields.title.trim()
+  if (!title || title.length > 80) throw new Error('Titles are 1-80 characters')
+  const { data, error } = await supabase
+    .from('commission_listings')
+    .insert({
+      artist_id: me,
+      title,
+      description: (fields.description ?? '').trim(),
+      price_info: (fields.priceInfo ?? '').trim(),
+      contact_url: (fields.contactUrl ?? '').trim(),
+      slots_total: fields.slotsTotal ?? 1,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id
+}
+
+/** Update a commission listing the member owns. */
+export async function updateCommissionListing(
+  id: string,
+  patch: Partial<{
+    title: string
+    description: string
+    priceInfo: string
+    contactUrl: string
+    slotsTotal: number
+    slotsFilled: number
+    status: UiCommissionListing['status']
+  }>,
+): Promise<void> {
+  const row: Row = {}
+  if (patch.title !== undefined) row.title = patch.title.trim()
+  if (patch.description !== undefined) row.description = patch.description.trim()
+  if (patch.priceInfo !== undefined) row.price_info = patch.priceInfo.trim()
+  if (patch.contactUrl !== undefined) row.contact_url = patch.contactUrl.trim()
+  if (patch.slotsTotal !== undefined) row.slots_total = patch.slotsTotal
+  if (patch.slotsFilled !== undefined) row.slots_filled = patch.slotsFilled
+  if (patch.status !== undefined) row.status = patch.status
+  const { error } = await supabase.from('commission_listings').update(row).eq('id', id)
+  if (error) throw error
+}
+
+/** Delete a commission listing (own listing, or any listing if a mod). */
+export async function deleteCommissionListing(id: string): Promise<void> {
+  const { error } = await supabase.from('commission_listings').delete().eq('id', id)
+  if (error) throw error
+}
+
+function mapCommissionRequest(r: Row): UiCommissionRequest {
+  return {
+    id: r.id,
+    requesterId: r.requester_id,
+    requester: r.requester?.username ?? 'unknown',
+    requesterDisplay: r.requester?.display_name || r.requester?.username || 'unknown',
+    title: r.title,
+    description: r.description ?? '',
+    budget: r.budget ?? '',
+    status: r.status,
+    createdAt: r.created_at,
+  }
+}
+
+const COMMISSION_REQUEST_FIELDS =
+  'id, requester_id, title, description, budget, status, created_at, requester:profiles!commission_requests_requester_id_fkey(username, display_name)'
+
+/** All commission requests, newest first with open surfaced above fulfilled/closed. */
+export async function listCommissionRequests(): Promise<UiCommissionRequest[]> {
+  const { data, error } = await supabase
+    .from('commission_requests')
+    .select(COMMISSION_REQUEST_FIELDS)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? [])
+    .map(mapCommissionRequest)
+    .sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status])
+}
+
+/** Create a commission request owned by the signed-in member. */
+export async function createCommissionRequest(fields: {
+  title: string
+  description?: string
+  budget?: string
+}): Promise<string> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const title = fields.title.trim()
+  if (!title || title.length > 80) throw new Error('Titles are 1-80 characters')
+  const { data, error } = await supabase
+    .from('commission_requests')
+    .insert({
+      requester_id: me,
+      title,
+      description: (fields.description ?? '').trim(),
+      budget: (fields.budget ?? '').trim(),
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  return data.id
+}
+
+/** Update a commission request the member owns (status at minimum). */
+export async function updateCommissionRequest(
+  id: string,
+  patch: Partial<{ title: string; description: string; budget: string; status: UiCommissionRequest['status'] }>,
+): Promise<void> {
+  const row: Row = {}
+  if (patch.title !== undefined) row.title = patch.title.trim()
+  if (patch.description !== undefined) row.description = patch.description.trim()
+  if (patch.budget !== undefined) row.budget = patch.budget.trim()
+  if (patch.status !== undefined) row.status = patch.status
+  const { error } = await supabase.from('commission_requests').update(row).eq('id', id)
+  if (error) throw error
+}
+
+/** Delete a commission request (own request, or any request if a mod). */
+export async function deleteCommissionRequest(id: string): Promise<void> {
+  const { error } = await supabase.from('commission_requests').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ----- community wiki (collaborative pages + revisions; MILESTONES §9) -----
