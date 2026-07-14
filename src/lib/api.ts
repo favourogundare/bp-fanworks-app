@@ -237,7 +237,7 @@ export async function fetchMyPostInsights(postId: string): Promise<PostInsights 
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
+  'id, title, body, type, pinned, profile_pinned_at, archived_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
 
 function mapPost(row: Row): UiPost {
@@ -260,6 +260,7 @@ function mapPost(row: Row): UiPost {
     warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
     profilePinned: !!row.profile_pinned_at,
+    archived: !!row.archived_at,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
   }
@@ -351,6 +352,7 @@ export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost
     .select(POST_FIELDS)
     .eq('surface', 'community')
     .eq('pinned', false)
+    .is('archived_at', null)
   if (sort === 'top') q.order('vote_score', { ascending: false }).order('created_at', { ascending: false })
   else q.order('created_at', { ascending: false }) // 'new' and 'hot' both start newest-first
   const { data, error } = await q
@@ -370,6 +372,7 @@ export async function fetchTagFeed(slug: string): Promise<UiPost[]> {
     .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
     .eq('flairs.slug', slug)
     .eq('post.surface', 'community')
+    .is('post.archived_at', null)
   if (error) throw error
   return (data ?? [])
     .map((r: Row) => r.post)
@@ -425,6 +428,7 @@ export async function fetchFollowedFeed(): Promise<UiPost[]> {
           .select(`flairs!inner(slug), post:posts!inner(${POST_FIELDS})`)
           .in('flairs.slug', slugs)
           .eq('post.surface', 'community')
+          .is('post.archived_at', null)
       : Promise.resolve({ data: [] as Row[], error: null }),
     listIds.length
       ? // List posts are included regardless of surface — a list is a
@@ -433,6 +437,7 @@ export async function fetchFollowedFeed(): Promise<UiPost[]> {
           .from('collection_items')
           .select(`collection_id, post:posts!inner(${POST_FIELDS})`)
           .in('collection_id', listIds)
+          .is('post.archived_at', null)
       : Promise.resolve({ data: [] as Row[], error: null }),
   ])
   if (tagRes.error) throw tagRes.error
@@ -532,6 +537,34 @@ export async function setProfilePin(postId: string, on: boolean): Promise<void> 
   if (error) throw error
 }
 
+// ----- post archive / vault (MILESTONES §4) -----
+
+/** Archive (on=true) or unarchive one of your own posts. Archived posts drop
+ *  out of feeds/tags/search but stay reachable by direct link. Same RLS path
+ *  as setProfilePin: posts_update_own limits this to the author's rows. */
+export async function setPostArchived(postId: string, on: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('posts')
+    .update({ archived_at: on ? new Date().toISOString() : null })
+    .eq('id', postId)
+  if (error) throw error
+}
+
+/** The signed-in member's archived posts (both surfaces), newest archive first.
+ *  Backs the owner-only "Archived" tab on their profile. */
+export async function fetchMyArchivedPosts(): Promise<UiPost[]> {
+  const me = await getMyProfileId()
+  if (!me) return []
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('author_id', me)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
+}
+
 // ----- reading lists / collections (public, followable; MILESTONES §6) -----
 
 export interface UiCollection {
@@ -584,6 +617,7 @@ export async function fetchCollectionPosts(id: string): Promise<UiPost[]> {
     .from('posts')
     .select(`${POST_FIELDS}, collection_items!inner(collection_id)`)
     .eq('collection_items.collection_id', id)
+    .is('archived_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map(mapPost)
@@ -888,6 +922,7 @@ export async function searchPosts(query: string): Promise<UiPost[]> {
     .from('posts')
     .select(POST_FIELDS)
     .eq('surface', 'community')
+    .is('archived_at', null)
     .textSearch('search_tsv', q, { type: 'websearch', config: 'english' })
     .order('created_at', { ascending: false }) // ponytail: recency order; ts_rank needs an RPC if relevance ordering matters later
     .limit(50)
@@ -902,6 +937,7 @@ export async function fetchPinned(): Promise<UiPinned[]> {
     .select('id, title, vote_score, comments(count)')
     .eq('surface', 'community')
     .eq('pinned', true)
+    .is('archived_at', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map((r: Row) => ({
@@ -1160,6 +1196,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .select(POST_FIELDS)
       .eq('author_id', p.id)
       .eq('surface', 'profile')
+      .is('archived_at', null)
       .order('profile_pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }),
     supabase
