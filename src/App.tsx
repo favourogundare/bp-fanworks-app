@@ -4,22 +4,22 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check, Trash2,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchSidebarBookmarks } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import type { UiPost, UiPinned, UiProfile, UiBookmark } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
 import { goldPair, neutralPair } from "./lib/palettes";
@@ -840,16 +840,130 @@ function Rule({ rule, index, t, last }) {
   );
 }
 
+// Pre-fetch fallback so the sidebar never flashes empty and still renders if
+// the DB read fails. Derived from the original hardcoded `community.bookmarks`
+// (also the source of the 0029 seed), converted to the UiBookmark shape.
+const FALLBACK_BOOKMARKS: UiBookmark[] = community.bookmarks.map((b: any, i: number) => ({
+  id: `fallback-${i}`,
+  label: b.label,
+  route: b.to ?? null,
+  pinnedMatch: b.pinnedMatch ? b.pinnedMatch.source : null,
+  position: i,
+}));
+
+// Editable fields shared by the add + edit bookmark rows (mod-only).
+function BookmarkFields({ t, label, setLabel, kind, setKind, value, setValue }: any) {
+  const inputStyle = { width: "100%", background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 8px", fontSize: 12.5, boxSizing: "border-box" as const };
+  return (
+    <>
+      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" style={{ ...inputStyle, marginBottom: 6 }} />
+      <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ ...inputStyle, width: "auto", flex: "0 0 auto" }}>
+          <option value="route">Route</option>
+          <option value="match">Pinned match</option>
+        </select>
+        <input value={value} onChange={(e) => setValue(e.target.value)}
+          placeholder={kind === "route" ? "/t/fanfiction" : "self-promo"} style={{ ...inputStyle, flex: 1 }} />
+      </div>
+    </>
+  );
+}
+
+// One existing bookmark in edit mode: rename/retarget, reorder, delete.
+function BookmarkEditRow({ t, bm, index, count, onMove, onDelete, onChanged }: any) {
+  const initialKind: "route" | "match" = bm.route != null ? "route" : "match";
+  const initialValue = bm.route ?? bm.pinnedMatch ?? "";
+  const [label, setLabel] = useState(bm.label);
+  const [kind, setKind] = useState<"route" | "match">(initialKind);
+  const [value, setValue] = useState(initialValue);
+  const [busy, setBusy] = useState(false);
+  const dirty = label !== bm.label || kind !== initialKind || value !== initialValue;
+
+  const save = async () => {
+    if (!label.trim() || !value.trim()) { alert("Label and target are required."); return; }
+    setBusy(true);
+    try {
+      await modUpsertSidebarBookmark(bm.id, label.trim(), kind === "route" ? value.trim() : null, kind === "match" ? value.trim() : null);
+      await onChanged();
+    } catch (e) { console.error("save bookmark failed", e); alert("Could not save bookmark."); }
+    finally { setBusy(false); }
+  };
+
+  const iconBtn = (disabled: boolean) => ({ background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "5px 7px", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, display: "flex", alignItems: "center" });
+  return (
+    <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 8, marginBottom: 8 }}>
+      <BookmarkFields t={t} label={label} setLabel={setLabel} kind={kind} setKind={setKind} value={value} setValue={setValue} />
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <button onClick={() => onMove(index, -1)} disabled={index === 0} title="Move up" style={iconBtn(index === 0)}><ArrowUp size={14} /></button>
+        <button onClick={() => onMove(index, 1)} disabled={index === count - 1} title="Move down" style={iconBtn(index === count - 1)}><ArrowDown size={14} /></button>
+        <button onClick={() => onDelete(bm.id)} title="Delete" style={{ ...iconBtn(false), color: "#e06a6a" }}><Trash2 size={14} /></button>
+        <div style={{ flex: 1 }} />
+        <button onClick={save} disabled={!dirty || busy}
+          style={{ background: dirty && !busy ? t.accent : t.panel2, color: dirty && !busy ? t.bg : t.muted, border: `1px solid ${dirty && !busy ? t.accent : t.border}`, borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: dirty && !busy ? "pointer" : "default" }}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The "add a bookmark" form shown at the bottom of the editor.
+function BookmarkAddRow({ t, onChanged }: any) {
+  const [label, setLabel] = useState("");
+  const [kind, setKind] = useState<"route" | "match">("route");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    if (!label.trim() || !value.trim()) { alert("Label and target are required."); return; }
+    setBusy(true);
+    try {
+      await modUpsertSidebarBookmark(null, label.trim(), kind === "route" ? value.trim() : null, kind === "match" ? value.trim() : null);
+      setLabel(""); setValue(""); setKind("route");
+      await onChanged();
+    } catch (e) { console.error("add bookmark failed", e); alert("Could not add bookmark."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{ border: `1px dashed ${t.border}`, borderRadius: 10, padding: 8 }}>
+      <BookmarkFields t={t} label={label} setLabel={setLabel} kind={kind} setKind={setKind} value={value} setValue={setValue} />
+      <button onClick={add} disabled={busy}
+        style={{ width: "100%", background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 0", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <Plus size={14} /> {busy ? "Adding…" : "Add bookmark"}
+      </button>
+    </div>
+  );
+}
+
 // ----- Community sidebar -----
-function CommunitySidebar({ t }) {
+function CommunitySidebar({ t, isMod }: any) {
   const navigate = useNavigate();
   const [stats, setStats] = useState<{ members: number; contributions: number } | null>(null);
   const [pinned, setPinned] = useState<any[]>([]);
   const [joined, setJoined] = useState<boolean | null>(null); // null until loaded
   const [joinBusy, setJoinBusy] = useState(false);
+  const [bookmarks, setBookmarks] = useState<UiBookmark[]>(FALLBACK_BOOKMARKS);
+  const [bookmarksFromDb, setBookmarksFromDb] = useState(false);
+  const [editingBookmarks, setEditingBookmarks] = useState(false);
+  const loadBookmarks = () => fetchSidebarBookmarks().then((b) => { setBookmarks(b); setBookmarksFromDb(true); });
   useEffect(() => { fetchCommunityStats().then(setStats).catch((e) => console.error("stats load failed", e)); }, []);
   useEffect(() => { fetchPinned().then(setPinned).catch((e) => console.error("pinned load failed", e)); }, []);
   useEffect(() => { fetchMyMembership().then(setJoined).catch((e) => console.error("membership load failed", e)); }, []);
+  useEffect(() => { loadBookmarks().catch((e) => console.error("bookmarks load failed", e)); }, []);
+  // Reorder two bookmarks and persist the new order (optimistic, rolls back).
+  const moveBookmark = async (index: number, dir: -1 | 1) => {
+    const j = index + dir;
+    if (j < 0 || j >= bookmarks.length) return;
+    const next = [...bookmarks];
+    [next[index], next[j]] = [next[j], next[index]];
+    const prev = bookmarks;
+    setBookmarks(next);
+    try { await modReorderSidebarBookmarks(next.map((b) => b.id)); await loadBookmarks(); }
+    catch (e) { console.error("reorder failed", e); setBookmarks(prev); alert("Could not reorder bookmarks."); }
+  };
+  const deleteBookmark = async (id: string) => {
+    try { await modDeleteSidebarBookmark(id); await loadBookmarks(); }
+    catch (e) { console.error("delete bookmark failed", e); alert("Could not delete bookmark."); }
+  };
   // Optimistically flip membership + the Wakandans count, rolling back on failure.
   const toggleJoin = () => {
     if (joined === null || joinBusy) return;
@@ -864,9 +978,12 @@ function CommunitySidebar({ t }) {
     }).finally(() => setJoinBusy(false));
   };
   // Resolve a bookmark to its target path, or null when nothing matches yet.
-  const bookmarkPath = (b: any): string | null => {
-    if (b.to) return b.to;
-    const hit = pinned.find((p) => b.pinnedMatch.test(p.title));
+  const bookmarkPath = (b: UiBookmark): string | null => {
+    if (b.route) return b.route;
+    if (!b.pinnedMatch) return null;
+    let re: RegExp;
+    try { re = new RegExp(b.pinnedMatch, "i"); } catch { return null; }
+    const hit = pinned.find((p) => re.test(p.title));
     return hit ? `/post/${hit.id}` : null;
   };
   return (
@@ -886,17 +1003,35 @@ function CommunitySidebar({ t }) {
         <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.members.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Wakandans</div></div>
         <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.contributions.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Contributions</div></div>
       </div>
-      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>COMMUNITY BOOKMARKS</div>
-      {community.bookmarks.map((b) => {
-        const to = bookmarkPath(b);
-        return (
-          <a key={b.label} href={to ?? undefined}
-            onClick={(e) => { e.preventDefault(); if (to) navigate(to); }}
-            style={{ display: "block", background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: to ? "pointer" : "default", textDecoration: "none" }}>
-            {b.label}
-          </a>
-        );
-      })}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5 }}>COMMUNITY BOOKMARKS</div>
+        {isMod && bookmarksFromDb && (
+          <button onClick={() => setEditingBookmarks((v) => !v)} title={editingBookmarks ? "Done editing" : "Edit bookmarks"}
+            style={{ background: "transparent", color: t.muted, border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 2 }}>
+            {editingBookmarks ? <Check size={15} /> : <Pencil size={14} />}
+          </button>
+        )}
+      </div>
+      {editingBookmarks ? (
+        <div style={{ marginBottom: 8 }}>
+          {bookmarks.map((b, i) => (
+            <BookmarkEditRow key={b.id} t={t} bm={b} index={i} count={bookmarks.length}
+              onMove={moveBookmark} onDelete={deleteBookmark} onChanged={loadBookmarks} />
+          ))}
+          <BookmarkAddRow t={t} onChanged={loadBookmarks} />
+        </div>
+      ) : (
+        bookmarks.map((b) => {
+          const to = bookmarkPath(b);
+          return (
+            <a key={b.id} href={to ?? undefined}
+              onClick={(e) => { e.preventDefault(); if (to) navigate(to); }}
+              style={{ display: "block", background: t.panel2, borderRadius: 999, padding: "9px 0", textAlign: "center", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: to ? "pointer" : "default", textDecoration: "none" }}>
+              {b.label}
+            </a>
+          );
+        })
+      )}
       <div style={{ color: t.heading, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, margin: "16px 0 4px" }}>BLACK PANTHER FANWORKS RULES</div>
       {community.rules.map((r, i) => <Rule key={i} rule={r} index={i} t={t} last={i === community.rules.length - 1} />)}
     </div>
@@ -1163,7 +1298,7 @@ function ContinueReading({ t, bp }: any) {
   );
 }
 
-function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged }: any) {
+function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged, isMod }: any) {
   const bp = useBreakpoint();
   return (
     <div style={contentGrid(bp)}>
@@ -1203,7 +1338,7 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
           posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} />)
         )}
       </div>
-      <div><CommunitySidebar t={t} /></div>
+      <div><CommunitySidebar t={t} isMod={isMod} /></div>
     </div>
   );
 }
@@ -1409,7 +1544,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
         <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />
       </div>
-      {!reading && <div><CommunitySidebar t={t} /></div>}
+      {!reading && <div><CommunitySidebar t={t} isMod={isMod} /></div>}
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
   );
@@ -1878,7 +2013,7 @@ function AppLayout() {
 function LandingRoute() {
   const c: any = useOutletContext();
   useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
-  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} />;
+  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} isMod={c.myIsMod} />;
 }
 
 // Shared list layout for tag-filter and search-result pages.

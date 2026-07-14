@@ -6,7 +6,7 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview } from './types'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiBookmark } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -852,6 +852,22 @@ export async function searchPosts(query: string): Promise<UiPost[]> {
 }
 
 /** Pinned "Community highlights" cards. */
+/** Community-sidebar bookmarks, ordered for display. Public read (RLS). */
+export async function fetchSidebarBookmarks(): Promise<UiBookmark[]> {
+  const { data, error } = await supabase
+    .from('sidebar_bookmarks')
+    .select('id, label, route, pinned_match, position')
+    .order('position', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map((r: Row) => ({
+    id: r.id,
+    label: r.label,
+    route: r.route ?? null,
+    pinnedMatch: r.pinned_match ?? null,
+    position: r.position,
+  }))
+}
+
 export async function fetchPinned(): Promise<UiPinned[]> {
   const { data, error } = await supabase
     .from('posts')
