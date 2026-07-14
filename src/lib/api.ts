@@ -6,6 +6,7 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
+import { PROFILE_THEMES } from './palettes'
 import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -1010,6 +1011,7 @@ export async function updateMyProfile(fields: {
   spoiler_free?: boolean
   spoiler_tags?: string[]
   muted_tags?: string[]
+  profile_theme?: string | null
 }): Promise<void> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -1019,6 +1021,9 @@ export async function updateMyProfile(fields: {
   // javascript:/data: URLs at the trust boundary.
   for (const u of [fields.ao3_url, fields.kofi_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
+  // Presets only — mirrors the profiles_profile_theme_check constraint (0027).
+  if (fields.profile_theme != null && !PROFILE_THEMES[fields.profile_theme])
+    throw new Error('Unknown profile theme')
   // Username changes go through the change_username RPC: the direct column
   // grant was revoked in 0025 so the 30-day cooldown is enforced in the DB.
   const { username, ...rest } = fields
@@ -1100,7 +1105,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, username_changed_at`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, kofi_url, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -1136,6 +1141,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
     mutedTags: p.muted_tags ?? [],
+    profileTheme: p.profile_theme ?? null,
     usernameChangedAt: p.username_changed_at ?? null,
     followers: followersRes.count ?? 0,
     karma: (p.karma ?? 0).toLocaleString(),

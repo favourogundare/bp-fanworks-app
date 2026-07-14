@@ -50,3 +50,80 @@ export const pawGradient: Record<ThemeMode, string> = {
   dark: "radial-gradient(circle at 35% 30%, #2a2a2e, #050505)",
   light: "radial-gradient(circle at 35% 30%, #ffffff, #e3d9be)",
 };
+
+// ----- Profile themes (migration 0027) --------------------------------------
+// Curated accent presets a member can pick for their own profile page.
+// A preset overrides only accent-level keys (accent/accentText/heading/link)
+// on top of the visitor's mode-appropriate base palette — bg/panel/text/muted
+// always stay with the light/dark mode choice, so a theme can never fight the
+// dark-mode toggle or hurt body-text contrast. Each preset carries separate
+// dark and light accent values (brighter accents on dark, deeper on light).
+// Slugs must stay in sync with the profiles_profile_theme_check constraint.
+
+type AccentOverride = Pick<Palette, "accent" | "accentText" | "heading" | "link">;
+
+export type ProfileThemePreset = {
+  label: string;
+  dark: AccentOverride;
+  light: AccentOverride;
+  headerGradient: Record<ThemeMode, string>; // profile sidebar banner tint
+};
+
+export const PROFILE_THEMES: Record<string, ProfileThemePreset> = {
+  vibranium: {
+    label: "Vibranium",
+    dark: { accent: "#A78BFA", accentText: "#17112B", heading: "#C4B5FD", link: "#A78BFA" },
+    light: { accent: "#6D28D9", accentText: "#FFFFFF", heading: "#5B21B6", link: "#6D28D9" },
+    headerGradient: {
+      dark: "linear-gradient(135deg,#4C3A8A,#1E1533)",
+      light: "linear-gradient(135deg,#EDE9FE,#C4B5FD)",
+    },
+  },
+  gold: {
+    label: "Golden Jaguar",
+    dark: { accent: "#C8A24A", accentText: "#15110A", heading: "#C8A24A", link: "#D9B968" },
+    light: { accent: "#C8A24A", accentText: "#15110A", heading: "#8A6A1E", link: "#8A6A1E" },
+    headerGradient: {
+      dark: "linear-gradient(135deg,#6B5620,#241C09)",
+      light: "linear-gradient(135deg,#F1EAD9,#D9C283)",
+    },
+  },
+  dora: {
+    label: "Dora Milaje",
+    dark: { accent: "#F27B72", accentText: "#2B0F0D", heading: "#F08C84", link: "#F08C84" },
+    light: { accent: "#B3261E", accentText: "#FFFFFF", heading: "#8F1D17", link: "#B3261E" },
+    headerGradient: {
+      dark: "linear-gradient(135deg,#7A2520,#2A0E0C)",
+      light: "linear-gradient(135deg,#FADCDA,#E9A29C)",
+    },
+  },
+  river: {
+    label: "River Tribe",
+    dark: { accent: "#4FC3D9", accentText: "#06272D", heading: "#7AD4E4", link: "#7AD4E4" },
+    light: { accent: "#0E7A88", accentText: "#FFFFFF", heading: "#0B5E69", link: "#0E7A88" },
+    headerGradient: {
+      dark: "linear-gradient(135deg,#155E6B,#08222A)",
+      light: "linear-gradient(135deg,#D7F0F4,#8ED4E0)",
+    },
+  },
+  herb: {
+    label: "Heart-Shaped Herb",
+    dark: { accent: "#7ECF8F", accentText: "#0D2412", heading: "#98DBA5", link: "#98DBA5" },
+    light: { accent: "#2F7D46", accentText: "#FFFFFF", heading: "#256238", link: "#2F7D46" },
+    headerGradient: {
+      dark: "linear-gradient(135deg,#2C5E3A,#0E2415)",
+      light: "linear-gradient(135deg,#DDF2E2,#93D6A4)",
+    },
+  },
+};
+
+// Base palette + preset accents for the given mode. Unknown/null slugs fall
+// through to the base, so a stale DB value degrades to the default look.
+export function applyProfileTheme(base: Palette, slug: string | null | undefined, mode: ThemeMode): Palette {
+  const preset = slug ? PROFILE_THEMES[slug] : undefined;
+  return preset ? { ...base, ...preset[mode] } : base;
+}
+
+export function profileHeaderGradient(slug: string | null | undefined, mode: ThemeMode): string | null {
+  return (slug && PROFILE_THEMES[slug]?.headerGradient[mode]) || null;
+}

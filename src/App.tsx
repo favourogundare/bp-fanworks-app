@@ -22,7 +22,7 @@ import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
-import { goldPair, neutralPair } from "./lib/palettes";
+import { goldPair, neutralPair, PROFILE_THEMES, applyProfileTheme, profileHeaderGradient } from "./lib/palettes";
 import type { Palette } from "./lib/palettes";
 import { useTheme } from "./lib/theme";
 import { useBreakpoint } from "./lib/useBreakpoint";
@@ -1488,6 +1488,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [ao3, setAo3] = useState(profile.ao3 || "");
   const [kofi, setKofi] = useState(profile.kofi || "");
   const [flairSlug, setFlairSlug] = useState<string | null>(profile.flairSlug ?? null);
+  const [profileTheme, setProfileTheme] = useState<string | null>(profile.profileTheme ?? null);
+  const { mode } = useTheme(); // for theme-swatch colors in the picker
   const [blur, setBlur] = useState(profile.blurMedia);
   const [spoilerFree, setSpoilerFree] = useState(!!profile.spoilerFree);
   const [spoilerTags, setSpoilerTags] = useState<string[]>(profile.spoilerTags || []);
@@ -1524,6 +1526,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
       if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
       if (JSON.stringify(mutedTagsEdit) !== JSON.stringify(profile.mutedTags || [])) patch.muted_tags = mutedTagsEdit;
+      if ((profileTheme ?? null) !== (profile.profileTheme ?? null)) patch.profile_theme = profileTheme;
       if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile, profile.avatarUrl);
       if (Object.keys(patch).length) await updateMyProfile(patch);
       // Member flair goes through its own RPC (scope-guarded), not updateMyProfile.
@@ -1576,6 +1579,20 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
         <option value="">— no flair —</option>
         {MEMBER_FLAIRS.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
       </select>
+      <label style={label}>PROFILE THEME</label>
+      <div style={{ color: t.muted, fontSize: 12, margin: "0 0 6px" }}>Accent colors for your profile page, in both light and dark mode:</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {[[null, "Classic", neutralPair[mode].accent] as const, ...Object.entries(PROFILE_THEMES).map(([slug, p]) => [slug, p.label, p[mode].accent] as const)].map(([slug, lbl, swatch]) => {
+          const on = (profileTheme ?? null) === slug;
+          return (
+            <button key={lbl} onClick={() => setProfileTheme(slug)}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: t.bg, color: t.text, border: `1px solid ${t.border}`, outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700, opacity: on ? 1 : 0.7 }}>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: swatch, display: "inline-block" }} />
+              {lbl}
+            </button>
+          );
+        })}
+      </div>
       <label style={label}>CONTENT</label>
       <label style={{ display: "flex", alignItems: "center", gap: 8, color: t.text, fontSize: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} /> Blur NSFW / spoiler media
@@ -1637,7 +1654,11 @@ function MemberCollections({ t, username }: any) {
   );
 }
 
-function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
+function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
+  // Profile theme: layer the owner's preset accents onto the visitor's own
+  // light/dark base palette. Scoped to this page — the shell stays neutral.
+  const { mode } = useTheme();
+  const t = applyProfileTheme(baseT, profile?.profileTheme, mode);
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
   const [editing, setEditing] = useState(false);
@@ -1730,7 +1751,7 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
         </div>
       </div>
       <div>
-        <div style={{ height: 110, borderRadius: "14px 14px 0 0", background: "linear-gradient(135deg,#3a3a3a,#1a1a1a)" }} />
+        <div style={{ height: 110, borderRadius: "14px 14px 0 0", background: profileHeaderGradient(profile.profileTheme, mode) ?? "linear-gradient(135deg,#3a3a3a,#1a1a1a)" }} />
         <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderTop: "none", borderRadius: "0 0 14px 14px", padding: 16 }}>
           <div style={{ color: t.text, fontSize: 14, marginBottom: 14 }}>{profile.banner || profile.display}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
