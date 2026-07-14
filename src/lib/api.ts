@@ -7,7 +7,7 @@
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
 import { PROFILE_THEMES } from './palettes'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle } from './types'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -1517,4 +1517,88 @@ export async function updateCommissionRequest(
 export async function deleteCommissionRequest(id: string): Promise<void> {
   const { error } = await supabase.from('commission_requests').delete().eq('id', id)
   if (error) throw error
+}
+
+// ----- community wiki (collaborative pages + revisions; MILESTONES §9) -----
+
+/** Wiki page index (metadata only), alphabetical by title. */
+export async function listWikiPages(): Promise<UiWikiPageMeta[]> {
+  const { data, error } = await supabase
+    .from('wiki_pages')
+    .select('slug, title, edit_locked, updated_at, editor:profiles!wiki_pages_updated_by_fkey(username)')
+    .order('title', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map((r: Row) => ({
+    slug: r.slug,
+    title: r.title,
+    editLocked: !!r.edit_locked,
+    updatedBy: r.editor?.username ?? null,
+    updatedAt: r.updated_at,
+  }))
+}
+
+/** One wiki page by slug, or null if it doesn't exist yet. */
+export async function fetchWikiPage(slug: string): Promise<UiWikiPage | null> {
+  const { data, error } = await supabase
+    .from('wiki_pages')
+    .select('id, slug, title, body, edit_locked, created_at, updated_at, ' +
+      'creator:profiles!wiki_pages_created_by_fkey(username), editor:profiles!wiki_pages_updated_by_fkey(username)')
+    .eq('slug', slug)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  const r = data as Row
+  return {
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    body: r.body ?? '',
+    editLocked: !!r.edit_locked,
+    createdBy: r.creator?.username ?? null,
+    createdAt: r.created_at,
+    updatedBy: r.editor?.username ?? null,
+    updatedAt: r.updated_at,
+  }
+}
+
+/** Create or edit a wiki page (writes a revision); returns the page id. */
+export async function saveWikiPage(input: { slug: string; title: string; body: string; summary?: string }): Promise<string> {
+  const { data, error } = await supabase.rpc('save_wiki_page', {
+    p_slug: input.slug.trim(),
+    p_title: input.title.trim(),
+    p_body: input.body,
+    p_summary: (input.summary ?? '').trim(),
+  })
+  if (error) throw error
+  return data as string
+}
+
+/** Lock or unlock a page's editability (moderators only, enforced in the DB). */
+export async function setWikiLock(slug: string, locked: boolean): Promise<void> {
+  const { error } = await supabase.rpc('set_wiki_lock', { p_slug: slug, p_locked: locked })
+  if (error) throw error
+}
+
+/** Delete a wiki page (moderators only via RLS); revisions cascade. */
+export async function deleteWikiPage(slug: string): Promise<void> {
+  const { error } = await supabase.from('wiki_pages').delete().eq('slug', slug)
+  if (error) throw error
+}
+
+/** Revision history for a page, newest first. */
+export async function fetchWikiRevisions(pageId: string): Promise<UiWikiRevision[]> {
+  const { data, error } = await supabase
+    .from('wiki_revisions')
+    .select('id, title, body, summary, created_at, editor:profiles!wiki_revisions_editor_id_fkey(username)')
+    .eq('page_id', pageId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map((r: Row) => ({
+    id: r.id,
+    title: r.title,
+    body: r.body ?? '',
+    summary: r.summary ?? '',
+    editor: r.editor?.username ?? null,
+    createdAt: r.created_at,
+  }))
 }

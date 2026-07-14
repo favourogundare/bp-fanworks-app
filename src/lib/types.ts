@@ -47,6 +47,31 @@ export interface UiCircle {
   createdAt: string
 }
 
+// Community wiki (MILESTONES §9): collaborative pages with revision history.
+export interface UiWikiPageMeta {
+  slug: string
+  title: string
+  editLocked: boolean
+  updatedBy: string | null // username of the last editor
+  updatedAt: string
+}
+
+export interface UiWikiPage extends UiWikiPageMeta {
+  id: string
+  body: string
+  createdBy: string | null
+  createdAt: string
+}
+
+export interface UiWikiRevision {
+  id: string
+  title: string
+  body: string
+  summary: string
+  editor: string | null // username, or null if the account is gone
+  createdAt: string
+}
+
 export interface UiPinned {
   id: string
   title: string
