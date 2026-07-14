@@ -31,6 +31,19 @@ export interface UiPost {
   profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
+  circle: { slug: string; name: string } | null // sub-community, or null = General feed
+}
+
+// Circles Phase 1 (MILESTONES §9): public sub-communities.
+export interface UiCircle {
+  id: string
+  slug: string
+  name: string
+  description: string
+  creatorId: string
+  members: number
+  joined: boolean // is the signed-in member a member of this circle
+  createdAt: string
 }
 
 export interface UiPinned {

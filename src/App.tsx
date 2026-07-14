@@ -4,16 +4,16 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check, Users,
 } from "lucide-react";
 import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile } from "./lib/types";
+import type { UiPost, UiPinned, UiProfile, UiCircle } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
@@ -52,6 +52,7 @@ const community = {
     { label: "Wiki", pinnedMatch: /lore megathread/i },
     { label: "Fanfic Archive", to: "/t/fanfiction" },
     { label: "Weekly Self-Promo Thread", pinnedMatch: /self-promo/i },
+    { label: "Circles", to: "/circles" },
   ],
   rules: [
     { title: "Source All Artwork and Scans", desc: "All fanart, cosplay photos, or music must clearly credit the original artist or creator in the post title or a comment. If you are the creator, you may tag it as [OC]." },
@@ -920,10 +921,12 @@ const POST_TYPES = [
   { key: "vent", icon: MessageCircle, label: "Vent / Advice", desc: "Personal posts seeking peer support." },
 ];
 
-function CreatePostModal({ t, onClose, onCreated }: any) {
+function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
   const [sel, setSel] = useState("text");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [circleId, setCircleId] = useState<string>(initialCircleId ?? "");
+  const [circles, setCircles] = useState<UiCircle[]>([]);
   const [flairs, setFlairs] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [pollOpts, setPollOpts] = useState(["", "", "", ""]);
@@ -944,6 +947,14 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
   const isMedia = sel === "image" || sel === "video";
   const setPollOpt = (i: number, v: string) => setPollOpts((p) => p.map((x, j) => (j === i ? v : x)));
 
+  // Circles Phase 1: every circle is public and open to posting, so the
+  // "Post to" picker lists them all (joined ones first).
+  useEffect(() => {
+    listCircles()
+      .then((all) => setCircles([...all].sort((a, b) => Number(b.joined) - Number(a.joined) || b.members - a.members)))
+      .catch((e) => console.error("circles load failed", e));
+  }, []);
+
   const submit = async () => {
     if (!title.trim()) { setError("Give your post a title."); return; }
     const cleanPoll = pollOpts.map((o) => o.trim()).filter(Boolean);
@@ -952,7 +963,7 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
     try {
       let media: string[] = [];
       if (files.length) media = await uploadMedia(files);
-      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined, contentWarnings: warnings });
+      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined, contentWarnings: warnings, circleId: circleId || null });
       onCreated?.();
       onClose();
     } catch (e: any) {
@@ -966,6 +977,15 @@ function CreatePostModal({ t, onClose, onCreated }: any) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>Create a post</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <label style={{ color: t.muted, fontSize: 12, fontWeight: 700 }}>Post to</label>
+          <select value={circleId} onChange={(e) => setCircleId(e.target.value)}
+            style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "7px 10px", fontSize: 13, maxWidth: 260 }}>
+            <option value="">General feed</option>
+            {circles.map((ci) => <option key={ci.id} value={ci.id}>c/{ci.slug} — {ci.name}</option>)}
+          </select>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 18 }}>
           {POST_TYPES.map((p) => {
@@ -1324,7 +1344,7 @@ function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor }: any
   );
 }
 
-function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername }: any) {
+function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername, onCircle }: any) {
   const bp = useBreakpoint();
   const [saved, toggleSave] = useSaved("post", post.id);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1356,8 +1376,12 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
       <div style={{ paddingTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <button onClick={onBack} style={{ background: t.panel2, border: "none", borderRadius: "50%", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}><ArrowLeft size={18} /></button>
-          <Avatar seed={community.name} size={26} t={t} />
-          <span style={{ color: t.heading, fontWeight: 700, fontSize: 13 }}>{community.name}</span>
+          <Avatar seed={post.circle ? post.circle.name : community.name} size={26} t={t} />
+          {post.circle ? (
+            <span onClick={() => onCircle?.(post.circle.slug)} title={post.circle.name} style={{ color: t.heading, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>c/{post.circle.slug}</span>
+          ) : (
+            <span style={{ color: t.heading, fontWeight: 700, fontSize: 13 }}>{community.name}</span>
+          )}
           <span style={{ color: t.muted, fontSize: 12 }}>· {post.when}</span>
           {mine && (
             <div style={{ marginLeft: "auto", position: "relative" }}>
@@ -1748,6 +1772,8 @@ function AccountsMenu({ t, phone }: any) {
 function AppLayout() {
   const [showCreate, setShowCreate] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [createCircleId, setCreateCircleId] = useState<string | null>(null);
+  const [createDone, setCreateDone] = useState<(() => void) | null>(null);
   const [chatTarget, setChatTarget] = useState<{ profileId: string; username: string } | null>(null);
   const [mutedUsers, setMutedUsers] = useState<string[]>([]); // usernames hidden from feed (muted/blocked)
   const [searchQ, setSearchQ] = useState("");
@@ -1818,6 +1844,13 @@ function AppLayout() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshHidden(); }, [user?.id]);
 
+  // Open the create-post modal, optionally preset to a circle; onDone runs
+  // after a successful post (e.g. the circle page reloading its feed).
+  const openCreate = (circleId?: string, onDone?: () => void) => {
+    setCreateCircleId(circleId ?? null);
+    setCreateDone(() => onDone ?? null);
+    setShowCreate(true);
+  };
   const goPost = (post: any) => navigate(`/post/${post.id}`);
   const goUser = (username: any) => { const u = typeof username === "string" ? username : myUsername; if (u) navigate(`/user/${u}`); };
   const goHome = () => navigate("/");
@@ -1831,7 +1864,7 @@ function AppLayout() {
   };
 
   // Shared with the routed pages via <Outlet context>.
-  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed, mutedTags, toggleMuteTag };
+  const ctx = { t, feed, pinned, feedLoading, sort, changeSort, following, followedTags, refreshFollowedTags, mutedUsers, myUsername, myIsMod, goPost, goUser, goHome, openChatWith, refreshHidden, refreshIdentity, refreshUnread, loadFeed, mutedTags, toggleMuteTag, openCreate };
 
   return (
     <PrefsContext.Provider value={{ blurMedia, spoilerFree, spoilerTags, mutedTags }}>
@@ -1845,7 +1878,7 @@ function AppLayout() {
 
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setShowCreate(true)} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
+          <button onClick={() => openCreate()} aria-label="Create Post" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: phone ? 0 : "8px 16px", width: phone ? 44 : undefined, height: phone ? 44 : undefined, cursor: "pointer", fontWeight: 700, fontSize: 13 }}><Plus size={16} />{phone ? null : " Create Post"}</button>
           <button onClick={() => navigate("/inbox")} title="Notifications" aria-label="Notifications" style={{ position: "relative", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: "50%", width: phone ? 44 : 38, height: phone ? 44 : 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.text }}>
             <Bell size={18} />
             {unread > 0 && <span style={{ position: "absolute", top: -3, right: -3, background: "#e0726b", color: "#1a0b0b", fontSize: 10, fontWeight: 800, borderRadius: 999, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unread > 9 ? "9+" : unread}</span>}
@@ -1866,7 +1899,7 @@ function AppLayout() {
         <Outlet context={ctx} />
       </div>
 
-      {showCreate && <CreatePostModal t={t} onClose={() => setShowCreate(false)} onCreated={loadFeed} />}
+      {showCreate && <CreatePostModal t={t} initialCircleId={createCircleId} onClose={() => { setShowCreate(false); setCreateCircleId(null); setCreateDone(null); }} onCreated={() => { loadFeed(); createDone?.(); }} />}
       {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
       <UserHoverCardHost t={t} myUsername={myUsername} />
     </div>
@@ -2247,6 +2280,7 @@ function SavedRoute() {
 function PostRoute() {
   const c: any = useOutletContext();
   const { id } = useParams();
+  const navigate = useNavigate();
   const [post, setPost] = useState<UiPost | null>(null);
   const load = async () => { try { setPost(await fetchPostWithComments(id as string)); } catch (e) { console.error("post load failed", e); } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2258,7 +2292,7 @@ function PostRoute() {
     recordView({ id: post.id, title: post.title, author: post.author });
   }, [post]);
   if (!post) return <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 16px", color: c.t.muted, fontSize: 14 }}>Loading…</div>;
-  return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} myUsername={c.myUsername} />;
+  return <PostPage post={post} t={c.t} onBack={c.goHome} onAuthor={c.goUser} isMod={c.myIsMod} onCommentAdded={load} onRemoved={() => { c.goHome(); c.loadFeed(); }} myUsername={c.myUsername} onCircle={(slug: string) => navigate(`/c/${slug}`)} />;
 }
 
 function MemberRoute() {
@@ -2283,6 +2317,158 @@ function MemberRoute() {
     else load();
   };
   return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} onSavedProfile={onSavedProfile} myUsername={c.myUsername} />;
+}
+
+// ----- Circles (MILESTONES §9 Phase 1: public sub-communities) -----
+// slug preview from a typed name: "Shuri Fan Art!" -> "shuri-fan-art"
+function slugifyCircle(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+
+function CreateCircleModal({ t, onClose, onCreated }: any) {
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const finalSlug = slugTouched ? slug : slugifyCircle(name);
+
+  const submit = async () => {
+    if (!name.trim()) { setError("Give your circle a name."); return; }
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(finalSlug)) { setError("Slug must be 1-40 chars: lowercase letters, numbers, dashes."); return; }
+    setBusy(true); setError(null);
+    try {
+      await createCircle({ slug: finalSlug, name: name.trim(), description: description.trim() });
+      onCreated?.(finalSlug);
+      onClose();
+    } catch (e: any) {
+      const msg = (e && e.message) || "Couldn't create the circle.";
+      setError(/duplicate|unique/i.test(msg) ? `c/${finalSlug} is taken — pick another slug.` : msg);
+    } finally { setBusy(false); }
+  };
+
+  const fieldStyle: React.CSSProperties = { width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 440, maxWidth: "100%", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>Create a circle</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (e.g. Shuri Fan Art)" maxLength={60} style={fieldStyle} />
+        <input value={finalSlug} onChange={(e) => { setSlugTouched(true); setSlug(slugifyCircle(e.target.value) || e.target.value.toLowerCase()); }} placeholder="slug" maxLength={40} style={{ ...fieldStyle, fontFamily: "monospace", fontSize: 13 }} />
+        <div style={{ color: t.muted, fontSize: 12, marginTop: -4, marginBottom: 10 }}>Lives at c/{finalSlug || "…"}</div>
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this circle about? (optional)" rows={3} maxLength={500}
+          style={{ ...fieldStyle, resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+        {error && <div style={{ color: t.error, fontSize: 13, marginTop: 4 }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+          <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
+          <button onClick={submit} disabled={busy} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800, opacity: busy ? 0.6 : 1 }}>{busy ? "Creating…" : "Create"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CircleJoinButton({ t, circle, onChanged }: any) {
+  const [busy, setBusy] = useState(false);
+  const toggle = () => {
+    setBusy(true);
+    (circle.joined ? leaveCircle(circle.id) : joinCircle(circle.id))
+      .then(onChanged)
+      .catch((e) => console.error("circle join toggle failed", e))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <button onClick={toggle} disabled={busy} style={relBtn(t, circle.joined)}>
+      {circle.joined ? <UserMinus size={15} /> : <UserPlus size={15} />} {circle.joined ? "Joined" : "Join"}
+    </button>
+  );
+}
+
+function CirclesRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const navigate = useNavigate();
+  const [circles, setCircles] = useState<UiCircle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+
+  const load = () => {
+    listCircles().then(setCircles).catch((e) => console.error("circles load failed", e)).finally(() => setLoading(false));
+  };
+  useEffect(() => { window.scrollTo(0, 0); load(); }, []);
+  useEffect(() => { setPageMeta({ title: `Circles — ${community.name}`, description: `Sub-communities on ${community.name}.`, url: "/circles", type: "website" }); }, []);
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, padding: "20px 0 12px" }}>
+        <div>
+          <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Circles</h1>
+          <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>Smaller spaces inside {community.name} — join the ones that fit.</div>
+        </div>
+        <button onClick={() => setShowCreate(true)} style={{ ...relBtn(t), background: t.accent, color: t.accentText, border: "none" }}><Plus size={14} /> Create a circle</button>
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : circles.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No circles yet — create the first one.</div>
+      ) : (
+        circles.map((ci) => (
+          <div key={ci.id} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 16, marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <Avatar seed={ci.name} size={40} t={t} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span onClick={() => navigate(`/c/${ci.slug}`)} style={{ color: t.text, fontSize: 16, fontWeight: 800, cursor: "pointer" }}>{ci.name}</span>
+                <span style={{ color: t.muted, fontSize: 12 }}>c/{ci.slug}</span>
+                <span style={{ color: t.muted, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Users size={12} /> {ci.members}</span>
+              </div>
+              {ci.description && <div style={{ color: t.muted, fontSize: 13, marginTop: 4, lineHeight: 1.5 }}>{ci.description}</div>}
+            </div>
+            <CircleJoinButton t={t} circle={ci} onChanged={load} />
+          </div>
+        ))
+      )}
+      {showCreate && <CreateCircleModal t={t} onClose={() => setShowCreate(false)} onCreated={(slug: string) => navigate(`/c/${slug}`)} />}
+    </div>
+  );
+}
+
+function CircleRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const { slug } = useParams();
+  const [circle, setCircle] = useState<UiCircle | null>(null);
+  const [posts, setPosts] = useState<UiPost[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    fetchCircle(slug as string)
+      .then(async (ci) => {
+        setCircle(ci);
+        setPosts(ci ? await fetchCircleFeed(ci.id) : []);
+      })
+      .catch((e) => console.error("circle load failed", e))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); setCircle(null); load(); }, [slug]);
+  useEffect(() => {
+    if (circle) setPageMeta({ title: `${circle.name} — ${community.name}`, description: circle.description || `The ${circle.name} circle on ${community.name}.`, url: `/c/${circle.slug}`, type: "website" });
+  }, [circle]);
+
+  if (!loading && !circle) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>This circle doesn't exist.</div>;
+
+  const action = circle && (
+    <div style={{ display: "flex", gap: 8 }}>
+      <CircleJoinButton t={t} circle={circle} onChanged={load} />
+      <button onClick={() => c.openCreate(circle.id, load)} style={{ ...relBtn(t), background: t.accent, color: t.accentText, border: "none" }}><Plus size={14} /> New post</button>
+    </div>
+  );
+  return <PostListPage t={t} title={circle?.name ?? "…"} sub={circle ? `c/${circle.slug} · ${circle.members} member${circle.members === 1 ? "" : "s"}${circle.description ? ` — ${circle.description}` : ""}` : null}
+    action={action} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="No posts in this circle yet — start it off." />;
 }
 
 // ----- Auth gate + route table -----
@@ -2338,6 +2524,8 @@ export default function AppRoutes() {
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
+        <Route path="circles" element={<CirclesRoute />} />
+        <Route path="c/:slug" element={<CircleRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

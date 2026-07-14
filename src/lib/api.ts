@@ -6,7 +6,7 @@
 
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview } from './types'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCircle } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -57,6 +57,7 @@ export async function createPost(input: {
   pollOptions?: string[]
   contentWarnings?: string[]
   surface?: 'community' | 'profile'
+  circleId?: string | null // post into a circle; null/undefined = General feed
 }): Promise<string> {
   const me = await getMyProfileId()
   if (!me) throw new Error('Not signed in')
@@ -71,6 +72,7 @@ export async function createPost(input: {
       media: input.media ?? [],
       poll_options: input.pollOptions ?? [],
       content_warnings: input.contentWarnings ?? [],
+      circle_id: input.circleId ?? null,
     })
     .select('id')
     .single()
@@ -194,7 +196,7 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
   'id, title, body, type, pinned, profile_pinned_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
-  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count)'
+  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count), circle:circles(slug, name)'
 
 function mapPost(row: Row): UiPost {
   return {
@@ -218,6 +220,7 @@ function mapPost(row: Row): UiPost {
     profilePinned: !!row.profile_pinned_at,
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
+    circle: row.circle ? { slug: row.circle.slug, name: row.circle.name } : null,
   }
 }
 
@@ -307,6 +310,7 @@ export async function fetchCommunityFeed(sort: FeedSort = 'new'): Promise<UiPost
     .select(POST_FIELDS)
     .eq('surface', 'community')
     .eq('pinned', false)
+    .is('circle_id', null) // circle posts live in their circle, not the General feed
   if (sort === 'top') q.order('vote_score', { ascending: false }).order('created_at', { ascending: false })
   else q.order('created_at', { ascending: false }) // 'new' and 'hot' both start newest-first
   const { data, error } = await q
@@ -858,6 +862,7 @@ export async function fetchPinned(): Promise<UiPinned[]> {
     .select('id, title, vote_score, comments(count)')
     .eq('surface', 'community')
     .eq('pinned', true)
+    .is('circle_id', null)
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map((r: Row) => ({
@@ -1145,4 +1150,99 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     unlocked: 0,
     posts: (postsRes.data ?? []).map(mapPost),
   }
+}
+
+// ----- circles (public sub-communities; MILESTONES §9 Phase 1) -----
+
+const CIRCLE_FIELDS = 'id, slug, name, description, creator_id, created_at, circle_members(count)'
+
+function mapCircle(r: Row, mine: Set<string>): UiCircle {
+  return {
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    description: r.description ?? '',
+    creatorId: r.creator_id,
+    members: r.circle_members?.[0]?.count ?? 0,
+    joined: mine.has(r.id),
+    createdAt: r.created_at,
+  }
+}
+
+/** The signed-in member's circle ids (empty set when signed out). */
+async function myCircleIds(): Promise<Set<string>> {
+  const me = await getMyProfileId()
+  if (!me) return new Set()
+  const { data, error } = await supabase
+    .from('circle_members')
+    .select('circle_id')
+    .eq('profile_id', me)
+  if (error) throw error
+  return new Set((data ?? []).map((r: Row) => r.circle_id))
+}
+
+/** All circles for the /circles directory, biggest first. */
+export async function listCircles(): Promise<UiCircle[]> {
+  const [{ data, error }, mine] = await Promise.all([
+    supabase.from('circles').select(CIRCLE_FIELDS),
+    myCircleIds(),
+  ])
+  if (error) throw error
+  return (data ?? [])
+    .map((r: Row) => mapCircle(r, mine))
+    .sort((a, b) => b.members - a.members || a.name.localeCompare(b.name))
+}
+
+/** One circle by slug, or null. */
+export async function fetchCircle(slug: string): Promise<UiCircle | null> {
+  const [{ data, error }, mine] = await Promise.all([
+    supabase.from('circles').select(CIRCLE_FIELDS).eq('slug', slug).maybeSingle(),
+    myCircleIds(),
+  ])
+  if (error) throw error
+  return data ? mapCircle(data, mine) : null
+}
+
+/** Create a circle via the spam-guarded RPC; returns the new circle id. */
+export async function createCircle(input: { slug: string; name: string; description?: string }): Promise<string> {
+  const { data, error } = await supabase.rpc('create_circle', {
+    p_slug: input.slug.trim(),
+    p_name: input.name.trim(),
+    p_description: (input.description ?? '').trim(),
+  })
+  if (error) throw error
+  return data as string
+}
+
+/** Join a circle as the signed-in member. */
+export async function joinCircle(circleId: string): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('circle_members')
+    .insert({ circle_id: circleId, profile_id: me })
+  if (error && error.code !== '23505') throw error // already joined = fine
+}
+
+/** Leave a circle. */
+export async function leaveCircle(circleId: string): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('circle_members')
+    .delete()
+    .eq('circle_id', circleId)
+    .eq('profile_id', me)
+  if (error) throw error
+}
+
+/** Posts inside one circle, newest first. */
+export async function fetchCircleFeed(circleId: string): Promise<UiPost[]> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select(POST_FIELDS)
+    .eq('circle_id', circleId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapPost)
 }
