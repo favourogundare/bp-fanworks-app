@@ -85,4 +85,5 @@ $$;
 insert into sidebar_bookmarks (label, route, pinned_match, position) values
   ('Wiki',                      null,            'lore megathread', 0),
   ('Fanfic Archive',            '/t/fanfiction', null,             1),
-  ('Weekly Self-Promo Thread',  null,            'self-promo',      2);
+  ('Weekly Self-Promo Thread',  null,            'self-promo',      2),
+  ('Commission Board',          '/commissions',  null,             3);

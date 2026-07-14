@@ -3,17 +3,17 @@ import {
   Plus, Bell, BellOff, MoreHorizontal, ArrowUp, ArrowDown, MessageCircle,
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
-  FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus,
+  FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus, Archive,
   UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check, Trash2,
 } from "lucide-react";
-import { Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
+import { Routes, Route, Navigate, Link, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchSidebarBookmarks } from "./lib/api";
-import type { FeedSort, UiNotification, UiFolder, UiCollection } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile, UiBookmark } from "./lib/types";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks } from "./lib/api";
+import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
+import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
@@ -22,7 +22,7 @@ import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
-import { goldPair, neutralPair } from "./lib/palettes";
+import { goldPair, neutralPair, PROFILE_THEMES, applyProfileTheme, profileHeaderGradient } from "./lib/palettes";
 import type { Palette } from "./lib/palettes";
 import { useTheme } from "./lib/theme";
 import { useBreakpoint } from "./lib/useBreakpoint";
@@ -52,6 +52,9 @@ const community = {
     { label: "Wiki", pinnedMatch: /lore megathread/i },
     { label: "Fanfic Archive", to: "/t/fanfiction" },
     { label: "Weekly Self-Promo Thread", pinnedMatch: /self-promo/i },
+    { label: "Commission Board", to: "/commissions" },
+    // Cross-link back to the source fiction (MILESTONES §12). External, opens in a new tab.
+    { label: "Read the fiction on tjadaka.com", href: "https://tjadaka.com", external: true },
   ],
   rules: [
     { title: "Source All Artwork and Scans", desc: "All fanart, cosplay photos, or music must clearly credit the original artist or creator in the post title or a comment. If you are the creator, you may tag it as [OC]." },
@@ -92,12 +95,12 @@ const OP_REASONING =
 // re-flair) where a wrapping span owns the click to toggle selection.
 function Flair({ flairKey, plain = false }: any) {
   const f = POST_FLAIRS[flairKey];
-  const navigate = useNavigate();
   if (!f) return null;
   const base = { background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 };
   if (plain) return <span style={base}>{f.label}</span>;
-  return <span onClick={(e) => { e.stopPropagation(); navigate(`/t/${flairKey}`); }} title={`See all ${f.label} posts`}
-    style={{ ...base, cursor: "pointer" }}>{f.label}</span>;
+  // Real link (SEO §11 #6): crawlers reach /t/:slug from every flair chip.
+  return <Link to={`/t/${flairKey}`} onClick={(e) => e.stopPropagation()} title={`See all ${f.label} posts`}
+    style={{ ...base, cursor: "pointer", textDecoration: "none", display: "inline-block" }}>{f.label}</Link>;
 }
 
 // Signed-in member's content prefs, provided by AppLayout (blur pref reaches MediaBlock without prop drilling).
@@ -201,6 +204,56 @@ function ConfirmDialog({ t, title, message, confirmLabel = "Delete", onConfirm, 
   );
 }
 
+// Creator insights modal (MILESTONES §7, v1): engagement counts for the
+// author's own post, from existing data only — votes and comments. Opens from
+// the "See More Insights" link, which PostCard renders only for the author;
+// fetchMyPostInsights re-checks authorship data-side and returns null otherwise.
+function PostInsightsDialog({ t, post, onClose }: any) {
+  const [insights, setInsights] = useState<PostInsights | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    fetchMyPostInsights(post.id)
+      .then((data) => { if (alive) setInsights(data); })
+      .catch((e) => console.error("post insights failed", e))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [post.id]);
+
+  const tile = (label: string, value: number, icon: React.ReactNode) => (
+    <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: t.muted, fontSize: 12, fontWeight: 700 }}>{icon} {label}</div>
+      <div style={{ color: t.text, fontSize: 22, fontWeight: 800, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, width: 400, maxWidth: "100%", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <BarChart3 size={16} color={t.accent} />
+          <h3 style={{ color: t.text, margin: 0, fontSize: 16, fontWeight: 800, flex: 1 }}>Post insights</h3>
+          <button onClick={onClose} aria-label="Close insights" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><X size={16} /></button>
+        </div>
+        <p style={{ color: t.muted, fontSize: 13, margin: "0 0 14px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{post.title}</p>
+        {loading ? (
+          <div style={{ color: t.muted, fontSize: 13, padding: "18px 0" }}>Loading insights…</div>
+        ) : !insights ? (
+          <div style={{ color: t.muted, fontSize: 13, padding: "18px 0" }}>Couldn't load insights — they're only available for your own posts.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {tile("Score", insights.score, <BarChart3 size={13} />)}
+            {tile("Comments", insights.commentCount, <MessageCircle size={13} />)}
+            {tile("Upvotes", insights.upvotes, <ArrowUp size={13} />)}
+            {tile("Downvotes", insights.downvotes, <ArrowDown size={13} />)}
+          </div>
+        )}
+        <p style={{ color: t.muted, fontSize: 12, lineHeight: 1.5, margin: "14px 0 0" }}>Only you can see this. Views and save counts aren't tracked yet.</p>
+      </div>
+    </div>
+  );
+}
+
 // Themed member flairs (must match the slugs seeded in migration 0001).
 const MEMBER_FLAIRS = [
   { slug: "dora-milaje", label: "Dora Milaje" },
@@ -230,7 +283,9 @@ function ContentWarningGate({ warnings, t, children }: any) {
   );
 }
 
-function MediaBlock({ post, t }: any) {
+// `eager` marks likely-LCP media (first feed card, post-detail hero): loads
+// immediately at high priority. Everything else lazy-loads (CWV, SEO §11 #5).
+function MediaBlock({ post, t, eager }: any) {
   // Descriptive alt for search/social indexing: "Art by goldjaguar_art: ..."
   const mediaKind = POST_FLAIRS[(post.flairs || [])[0]]?.label ?? "Post media";
   const [revealed, setRevealed] = useState(false);
@@ -251,10 +306,12 @@ function MediaBlock({ post, t }: any) {
     );
   }
   return (
-    <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+    // ponytail: minHeight reserves space so late-loading media doesn't shift the
+    // feed (CLS); exact per-image dims would need width/height stored at upload.
+    <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 8, minHeight: 200 }} onClick={(e) => e.stopPropagation()}>
       {urls.map((u: string, i: number) => isVideo(u)
-        ? <video key={i} src={u} controls muted aria-label={`${mediaKind} video by ${post.author}: ${post.title}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
-        : <img key={i} src={u} alt={`${mediaKind} by ${post.author}: ${post.title}${urls.length > 1 ? ` (${i + 1} of ${urls.length})` : ""}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
+        ? <video key={i} src={u} controls muted preload={eager ? "metadata" : "none"} aria-label={`${mediaKind} video by ${post.author}: ${post.title}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}` }} />
+        : <img key={i} src={u} loading={eager && i === 0 ? "eager" : "lazy"} decoding="async" fetchPriority={eager && i === 0 ? "high" : undefined} alt={`${mediaKind} by ${post.author}: ${post.title}${urls.length > 1 ? ` (${i + 1} of ${urls.length})` : ""}`} style={{ maxHeight: 340, maxWidth: "100%", borderRadius: 12, border: `1px solid ${t.border}`, objectFit: "cover" }} />)}
     </div>
   );
 }
@@ -398,6 +455,71 @@ function detectFanworkPlatform(raw: string): PlatformHit | null {
   return null;
 }
 
+// Soundtrack/music-platform link chips — same client-side chip pattern as the
+// fanwork platforms above (no metadata fetching, no backend). Deliberately a
+// chip and NOT an iframe player embed: embeds load third-party pages (and
+// their trackers) into every viewer's browser on render, and Bandcamp's embed
+// isn't even derivable from the URL without fetching. The detail is only what
+// the URL itself says (type + slug), so we never claim a title we don't know.
+const SOUNDCLOUD_RESERVED = new Set(["discover", "search", "stream", "upload", "charts", "feed", "you", "library", "messages", "notifications", "settings", "pages", "tags", "popular", "jobs", "imprint", "terms-of-use"]);
+const BANDCAMP_RESERVED_SUBS = new Set(["www", "daily", "blog", "get", "help", "bandcamp"]);
+const deslug = (s: string) => s.replace(/-/g, " ");
+
+function detectMusicPlatform(raw: string): PlatformHit | null {
+  let u: URL;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const segs = u.pathname.split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
+
+  if (host === "open.spotify.com") {
+    const p = /^intl-/.test(segs[0] ?? "") ? segs.slice(1) : segs; // strip locale prefix (/intl-de/...)
+    let detail;
+    // Spotify ids are opaque base62 — the type is all the URL honestly tells us.
+    if (p[0] === "track" && p[1]) detail = "Track";
+    else if (p[0] === "album" && p[1]) detail = "Album";
+    else if (p[0] === "playlist" && p[1]) detail = "Playlist";
+    else if (p[0] === "artist" && p[1]) detail = "Artist";
+    return { label: "Spotify", icon: "🎧", detail };
+  }
+  if (host === "music.apple.com") {
+    const p = /^[a-z]{2}$/.test(segs[0] ?? "") ? segs.slice(1) : segs; // strip storefront (/us/...)
+    let detail;
+    if (p[0] === "album" && p[1]) detail = u.searchParams.has("i") ? `Song · ${deslug(p[1])}` : `Album · ${deslug(p[1])}`;
+    else if (p[0] === "song" && p[1]) detail = `Song · ${deslug(p[1])}`;
+    else if (p[0] === "playlist" && p[1]) detail = `Playlist · ${deslug(p[1])}`;
+    else if (p[0] === "artist" && p[1]) detail = `Artist · ${deslug(p[1])}`;
+    return { label: "Apple Music", icon: "🎵", detail };
+  }
+  if (host === "music.youtube.com") {
+    let detail;
+    if (segs[0] === "watch" && u.searchParams.get("v")) detail = "Track";
+    else if (segs[0] === "playlist" && u.searchParams.get("list")) detail = "Playlist";
+    return { label: "YouTube Music", icon: "🎶", detail };
+  }
+  if (host === "soundcloud.com" || host === "on.soundcloud.com") {
+    let detail;
+    // on.soundcloud.com short links are opaque; soundcloud.com/{artist}/{track}.
+    if (host === "soundcloud.com" && segs[0] && !SOUNDCLOUD_RESERVED.has(segs[0])) {
+      if (segs[1] === "sets") detail = segs[2] ? `Playlist · ${deslug(segs[2])}` : `@${segs[0]}`;
+      else if (segs[1]) detail = `@${segs[0]} · ${deslug(segs[1])}`;
+      else detail = `@${segs[0]}`;
+    }
+    return { label: "SoundCloud", icon: "☁️", detail };
+  }
+  if (host === "bandcamp.com" || host.endsWith(".bandcamp.com")) {
+    const sub = host.endsWith(".bandcamp.com") ? host.slice(0, -".bandcamp.com".length) : "";
+    // Only single-level artist subdomains name an artist (mirrors the Tumblr guard).
+    const artist = sub && !BANDCAMP_RESERVED_SUBS.has(sub) && !sub.includes(".") ? sub : "";
+    let detail;
+    if (artist && segs[0] === "track" && segs[1]) detail = `@${artist} · ${deslug(segs[1])}`;
+    else if (artist && segs[0] === "album" && segs[1]) detail = `Album · ${deslug(segs[1])}`;
+    else if (artist) detail = `@${artist}`;
+    return { label: "Bandcamp", icon: "💿", detail };
+  }
+  return null;
+}
+
 // Known-platform URL rendered as a compact chip: icon + platform + parsed
 // detail. Full URL kept in the title tooltip; stopPropagation so clicking a
 // chip inside a comment doesn't toggle thread collapse.
@@ -436,7 +558,7 @@ function InlineImage({ src, t }: { src: string; t: any }) {
 }
 
 // Turn a plain-text run into nodes: allowlisted image URLs -> inline images,
-// known fanwork-platform URLs -> platform chips, other bare https URLs ->
+// known fanwork- or music-platform URLs -> platform chips, other bare https URLs ->
 // clickable links, everything else stays text. Used for the plain segments
 // inside the rich-text renderer below so embeds work anywhere body text appears.
 function linkify(text: string, t: any, kp: string): React.ReactNode[] {
@@ -448,7 +570,7 @@ function linkify(text: string, t: any, kp: string): React.ReactNode[] {
     const trail = part.match(/[.,;:!?)\]}'"]+$/)?.[0] ?? "";
     const url = trail ? part.slice(0, part.length - trail.length) : part;
     const isImage = isAllowlistedImageUrl(url);
-    const platform = isImage ? null : detectFanworkPlatform(url); // images stay the InlineImage path
+    const platform = isImage ? null : detectFanworkPlatform(url) ?? detectMusicPlatform(url); // images stay the InlineImage path; fanwork chips first, then music
     out.push(isImage
       ? <InlineImage key={`${kp}-lk${i}`} src={url} t={t} />
       : platform
@@ -701,7 +823,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
 }
 
 // ----- Post card -----
-function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged, canPin }: any) {
+function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onChanged, canPin, eager }: any) {
   const [followed, toggleFollowed] = usePostFollow(post.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -709,6 +831,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   const [body, setBody] = useState(post.body);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
   const [saved, toggleSave] = useSaved("post", post.id);
   const hoverHandlers = useUsernameHoverCard(post.author);
@@ -736,7 +859,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   if (muted) {
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", color: t.muted, fontSize: 13, fontStyle: "italic" }}>
       Post hidden — you muted{" "}
-      <span onClick={() => onAuthor(post.author)} {...hoverHandlers} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700 }}>{post.author}</span>. Open their profile to unmute.
+      <Link to={`/user/${post.author}`} {...hoverHandlers} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700, textDecoration: "none" }}>{post.author}</Link>. Open their profile to unmute.
     </div>;
   }
   if (spoilerHit.length > 0 && !revealed) {
@@ -757,9 +880,14 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
     <div style={{ borderBottom: `1px solid ${t.border}`, padding: "16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }} onClick={() => onOpen(post)}>
         <Avatar seed={post.author} size={26} t={t} />
-        <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
+        <Link to={`/user/${post.author}`} onClick={(e) => e.stopPropagation()} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading, textDecoration: "none" }}>{post.author}</Link>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
         {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
+        {post.archived && (
+          <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.muted, fontSize: 11, fontWeight: 700, border: `1px solid ${t.border}`, borderRadius: 999, padding: "1px 8px" }}>
+            <Archive size={11} /> Archived
+          </span>
+        )}
         {mine && (
           <div style={{ marginLeft: "auto", position: "relative" }} onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={16} /></button>
@@ -771,6 +899,10 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
                     {post.profilePinned ? "Unpin from profile" : "Pin to profile"}
                   </button>
                 )}
+                <button onClick={() => { setMenuOpen(false); setPostArchived(post.id, !post.archived).then(() => onChanged?.()).catch((e) => console.error("post archive failed", e)); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>
+                  {post.archived ? "Unarchive" : "Archive"}
+                </button>
                 <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
                 <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
               </div>
@@ -792,12 +924,14 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         </div>
       ) : (
       <div style={{ cursor: "pointer" }} onClick={() => onOpen(post)}>
-        <h3 style={{ fontSize: 19, fontWeight: 700, color: t.text, margin: "0 0 8px" }}>{post.title}</h3>
+        <h3 style={{ fontSize: 19, fontWeight: 700, margin: "0 0 8px" }}>
+          <Link to={`/post/${post.id}`} onClick={(e) => e.stopPropagation()} style={{ color: t.text, textDecoration: "none" }}>{post.title}</Link>
+        </h3>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         <ContentWarningGate warnings={post.warnings} t={t}>
           <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
           {post.links?.map((l, i) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-          <MediaBlock post={post} t={t} />
+          <MediaBlock post={post} t={t} eager={eager} />
         </ContentWarningGate>
       </div>
       )}
@@ -816,11 +950,12 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 10, color: t.muted, fontSize: 13 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Eye size={15} /> {post.views || "—"} views</span>
-            <span style={{ color: t.link, fontWeight: 700, cursor: "pointer" }}>See More Insights</span>
+            {mine && <span onClick={() => setInsightsOpen(true)} style={{ color: t.link, fontWeight: 700, cursor: "pointer" }}>See More Insights</span>}
           </div>
         </>
       )}
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+      {insightsOpen && <PostInsightsDialog t={t} post={post} onClose={() => setInsightsOpen(false)} />}
     </div>
   );
 }
@@ -843,13 +978,17 @@ function Rule({ rule, index, t, last }) {
 // Pre-fetch fallback so the sidebar never flashes empty and still renders if
 // the DB read fails. Derived from the original hardcoded `community.bookmarks`
 // (also the source of the 0029 seed), converted to the UiBookmark shape.
-const FALLBACK_BOOKMARKS: UiBookmark[] = community.bookmarks.map((b: any, i: number) => ({
-  id: `fallback-${i}`,
-  label: b.label,
-  route: b.to ?? null,
-  pinnedMatch: b.pinnedMatch ? b.pinnedMatch.source : null,
-  position: i,
-}));
+// External cross-links (e.g. tjadaka.com) are excluded — they aren't part of the
+// DB-backed, mod-editable set and are rendered statically alongside the list.
+const FALLBACK_BOOKMARKS: UiBookmark[] = community.bookmarks
+  .filter((b: any) => !b.external)
+  .map((b: any, i: number) => ({
+    id: `fallback-${i}`,
+    label: b.label,
+    route: b.to ?? null,
+    pinnedMatch: b.pinnedMatch ? b.pinnedMatch.source : null,
+    position: i,
+  }));
 
 // Editable fields shared by the add + edit bookmark rows (mod-only).
 function BookmarkFields({ t, label, setLabel, kind, setKind, value, setValue }: any) {
@@ -1032,6 +1171,18 @@ function CommunitySidebar({ t, isMod }: any) {
           );
         })
       )}
+      {/* External cross-link to the source fiction (MILESTONES §12). The mod-editable
+          DB bookmarks only model internal routes / pinned posts, so this external link
+          is rendered statically and always opens in a new tab. */}
+      <a href="https://tjadaka.com" target="_blank" rel="noopener noreferrer"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, borderRadius: 999, padding: "9px 0", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: "pointer", textDecoration: "none" }}>
+        Read the fiction on tjadaka.com <ExternalLink size={13} />
+      </a>
+      {/* Tag index (SEO §11 #6): every tag page linked from the sidebar so none is orphaned. */}
+      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "16px 0 10px" }}>BROWSE TAGS</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {Object.keys(POST_FLAIRS).map((k) => <Flair key={k} flairKey={k} />)}
+      </div>
       <div style={{ color: t.heading, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, margin: "16px 0 4px" }}>BLACK PANTHER FANWORKS RULES</div>
       {community.rules.map((r, i) => <Rule key={i} rule={r} index={i} t={t} last={i === community.rules.length - 1} />)}
     </div>
@@ -1298,13 +1449,13 @@ function ContinueReading({ t, bp }: any) {
   );
 }
 
-function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, sort, onSort, following, myUsername, onChanged, isMod }: any) {
+function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pager, pinned, loading, sort, onSort, following, myUsername, onChanged, isMod }: any) {
   const bp = useBreakpoint();
   return (
     <div style={contentGrid(bp)}>
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "20px 0" }}>
-          <img src="/bpf-home.png" alt={community.name}
+          <img src="/bpf-home.png" alt={community.name} fetchPriority="high"
             style={{ width: 72, height: 72, borderRadius: "50%", border: `2px solid ${t.accent}`, objectFit: "cover", flexShrink: 0, display: "block" }} />
           <h1 style={{ color: t.heading, fontSize: bp === "phone" ? 24 : 34, fontWeight: 800, margin: 0, letterSpacing: 0.3 }}>{community.name}</h1>
         </div>
@@ -1335,8 +1486,9 @@ function LandingPage({ t, onOpen, onAuthor, mutedUsers, posts, pinned, loading, 
         ) : posts.length === 0 ? (
           <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{following ? "No posts in tags you follow yet. Open a tag and hit Follow." : "No posts yet. Be the first to post!"}</div>
         ) : (
-          posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} />)
+          posts.map((p, i) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} onChanged={onChanged} eager={i === 0} />)
         )}
+        {!loading && pager}
       </div>
       <div><CommunitySidebar t={t} isMod={isMod} /></div>
     </div>
@@ -1499,6 +1651,10 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
               <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={18} /></button>
               {menuOpen && (
                 <div style={{ position: "absolute", right: 0, top: 24, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 4, zIndex: 10, minWidth: 110 }}>
+                  <button onClick={() => { setMenuOpen(false); setPostArchived(post.id, !post.archived).then(() => onCommentAdded?.()).catch((e) => console.error("post archive failed", e)); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>
+                    {post.archived ? "Unarchive" : "Archive"}
+                  </button>
                   <button onClick={() => { setEditing(true); setMenuOpen(false); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: t.text, cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Edit</button>
                   <button onClick={() => { setMenuOpen(false); setConfirming(true); }} style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", color: "#e0726b", cursor: "pointer", fontSize: 13, padding: "7px 10px", borderRadius: 6 }}>Delete</button>
                 </div>
@@ -1506,7 +1662,15 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             </div>
           )}
         </div>
-        <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)} {...hoverHandlers}>{post.author}</div>
+        <div style={{ fontSize: 12, marginBottom: 6 }}>
+          <Link to={`/user/${post.author}`} {...hoverHandlers} style={{ color: t.muted, cursor: "pointer", textDecoration: "none" }}>{post.author}</Link>
+        </div>
+        {post.archived && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", marginBottom: 12, color: t.muted, fontSize: 13 }}>
+            <Archive size={15} />
+            <span>This post is archived — hidden from feeds, tag pages, and search, but anyone with the link can view it.</span>
+          </div>
+        )}
         {editing ? (
           <div style={{ marginBottom: 14 }}>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
@@ -1528,7 +1692,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             : { color: t.text, fontSize: 15 }}>{renderRichText(post.body, t)}</div>}
           {post.type === "poll" && <PollBlock post={post} t={t} />}
           {post.links?.map((l: string, i: number) => <div key={i} style={{ fontSize: 14, color: t.link, textDecoration: "underline", marginBottom: 4 }}>{i + 1}. {l}</div>)}
-          <MediaBlock post={post} t={t} />
+          <MediaBlock post={post} t={t} eager />
         </ContentWarningGate>
         </>
         )}
@@ -1556,8 +1720,14 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [display, setDisplay] = useState(profile.display);
   const [banner, setBanner] = useState(profile.banner);
   const [ao3, setAo3] = useState(profile.ao3 || "");
+  const [ao3Works, setAo3Works] = useState<string[]>(profile.ao3Works || []);
+  const setWork = (i: number, v: string) => setAo3Works((p) => p.map((x, j) => (j === i ? v : x)));
+  const addWork = () => setAo3Works((p) => [...p, ""]);
+  const removeWork = (i: number) => setAo3Works((p) => p.filter((_, j) => j !== i));
   const [kofi, setKofi] = useState(profile.kofi || "");
   const [flairSlug, setFlairSlug] = useState<string | null>(profile.flairSlug ?? null);
+  const [profileTheme, setProfileTheme] = useState<string | null>(profile.profileTheme ?? null);
+  const { mode } = useTheme(); // for theme-swatch colors in the picker
   const [blur, setBlur] = useState(profile.blurMedia);
   const [spoilerFree, setSpoilerFree] = useState(!!profile.spoilerFree);
   const [spoilerTags, setSpoilerTags] = useState<string[]>(profile.spoilerTags || []);
@@ -1581,7 +1751,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const save = async () => {
     setErr("");
     if (!USERNAME_RE.test(username)) { setErr("Username must be 3-20 characters: letters, numbers, underscore."); return; }
-    for (const u of [ao3, kofi]) if (u && !/^https:\/\//i.test(u)) { setErr("Links must start with https://"); return; }
+    for (const u of [ao3, kofi, ...ao3Works]) if (u.trim() && !/^https:\/\//i.test(u.trim())) { setErr("Links must start with https://"); return; }
     setBusy(true);
     try {
       const patch: any = {};
@@ -1590,10 +1760,13 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (banner !== profile.banner) patch.banner = banner;
       if ((ao3 || null) !== profile.ao3) patch.ao3_url = ao3 || null;
       if ((kofi || null) !== profile.kofi) patch.kofi_url = kofi || null;
+      const cleanWorks = ao3Works.map((w) => w.trim()).filter(Boolean);
+      if (JSON.stringify(cleanWorks) !== JSON.stringify(profile.ao3Works || [])) patch.ao3_works = cleanWorks;
       if (blur !== profile.blurMedia) patch.blur_media = blur;
       if (spoilerFree !== !!profile.spoilerFree) patch.spoiler_free = spoilerFree;
       if (JSON.stringify(spoilerTags) !== JSON.stringify(profile.spoilerTags || [])) patch.spoiler_tags = spoilerTags;
       if (JSON.stringify(mutedTagsEdit) !== JSON.stringify(profile.mutedTags || [])) patch.muted_tags = mutedTagsEdit;
+      if ((profileTheme ?? null) !== (profile.profileTheme ?? null)) patch.profile_theme = profileTheme;
       if (avatarFile) patch.avatar_url = await uploadAvatar(avatarFile, profile.avatarUrl);
       if (Object.keys(patch).length) await updateMyProfile(patch);
       // Member flair goes through its own RPC (scope-guarded), not updateMyProfile.
@@ -1639,6 +1812,14 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       </div>
       <label style={label}>AO3 LINK</label>
       <input style={field} placeholder="https://archiveofourown.org/users/…" value={ao3} onChange={(e) => setAo3(e.target.value)} />
+      <label style={label}>AO3 FEATURED WORKS</label>
+      {ao3Works.map((w, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+          <input style={{ ...field, flex: 1 }} placeholder="https://archiveofourown.org/works/…" value={w} onChange={(e) => setWork(i, e.target.value)} />
+          <button type="button" onClick={() => removeWork(i)} title="Remove" style={{ background: "none", border: `1px solid ${t.border}`, color: t.muted, borderRadius: 8, padding: "0 10px", cursor: "pointer" }}><X size={14} /></button>
+        </div>
+      ))}
+      <button type="button" onClick={addWork} style={{ background: "none", border: "none", color: t.link, cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>+ Add work</button>
       <label style={label}>KO-FI LINK</label>
       <input style={field} placeholder="https://ko-fi.com/…" value={kofi} onChange={(e) => setKofi(e.target.value)} />
       <label style={label}>MEMBER FLAIR</label>
@@ -1646,6 +1827,20 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
         <option value="">— no flair —</option>
         {MEMBER_FLAIRS.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
       </select>
+      <label style={label}>PROFILE THEME</label>
+      <div style={{ color: t.muted, fontSize: 12, margin: "0 0 6px" }}>Accent colors for your profile page, in both light and dark mode:</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {[[null, "Classic", neutralPair[mode].accent] as const, ...Object.entries(PROFILE_THEMES).map(([slug, p]) => [slug, p.label, p[mode].accent] as const)].map(([slug, lbl, swatch]) => {
+          const on = (profileTheme ?? null) === slug;
+          return (
+            <button key={lbl} onClick={() => setProfileTheme(slug)}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: t.bg, color: t.text, border: `1px solid ${t.border}`, outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700, opacity: on ? 1 : 0.7 }}>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: swatch, display: "inline-block" }} />
+              {lbl}
+            </button>
+          );
+        })}
+      </div>
       <label style={label}>CONTENT</label>
       <label style={{ display: "flex", alignItems: "center", gap: 8, color: t.text, fontSize: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} /> Blur NSFW / spoiler media
@@ -1707,10 +1902,21 @@ function MemberCollections({ t, username }: any) {
   );
 }
 
-function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
+function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
+  // Profile theme: layer the owner's preset accents onto the visitor's own
+  // light/dark base palette. Scoped to this page — the shell stays neutral.
+  const { mode } = useTheme();
+  const t = applyProfileTheme(baseT, profile?.profileTheme, mode);
   const [rel, setRel] = useState({ follow: false, mute: false, block: false });
   const [followerDelta, setFollowerDelta] = useState(0);
   const [editing, setEditing] = useState(false);
+  // Owner-only "Archived" tab (MILESTONES §4): archived posts are excluded from
+  // the public posts list, so the owner browses/unarchives them here.
+  const [tab, setTab] = useState<"posts" | "archived">("posts");
+  const [archived, setArchived] = useState<UiPost[]>([]);
+  const loadArchived = () => fetchMyArchivedPosts().then(setArchived).catch((e) => console.error("archived load failed", e));
+  useEffect(() => { setTab("posts"); }, [profile?.id]);
+  useEffect(() => { if (isMe && tab === "archived") loadArchived(); }, [isMe, tab, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the real relationship state whenever we view a different profile.
   useEffect(() => {
@@ -1793,14 +1999,26 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
           </div>
         )}
         <MemberCollections t={t} username={profile.username} />
+        {isMe && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={() => setTab("posts")} style={relBtn(t, tab === "posts")}>Posts</button>
+            <button onClick={() => setTab("archived")} style={relBtn(t, tab === "archived")}><Archive size={14} /> Archived</button>
+          </div>
+        )}
         <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8 }}>
-          {profile.posts.length === 0
-            ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
-            : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} canPin={isMe} />)}
+          {tab === "archived" ? (
+            archived.length === 0
+              ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No archived posts. Archive one from its “⋯” menu to tuck it away from feeds and search.</div>
+              : archived.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={() => { loadArchived(); onProfileChanged?.(); }} canPin={false} />)
+          ) : (
+            profile.posts.length === 0
+              ? <div style={{ color: t.muted, fontSize: 13, padding: "20px 0" }}>No posts on this profile yet.</div>
+              : profile.posts.map((p) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={() => {}} muted={false} showMeta={false} myUsername={myUsername} onChanged={onProfileChanged} canPin={isMe} />)
+          )}
         </div>
       </div>
       <div>
-        <div style={{ height: 110, borderRadius: "14px 14px 0 0", background: "linear-gradient(135deg,#3a3a3a,#1a1a1a)" }} />
+        <div style={{ height: 110, borderRadius: "14px 14px 0 0", background: profileHeaderGradient(profile.profileTheme, mode) ?? "linear-gradient(135deg,#3a3a3a,#1a1a1a)" }} />
         <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderTop: "none", borderRadius: "0 0 14px 14px", padding: 16 }}>
           <div style={{ color: t.text, fontSize: 14, marginBottom: 14 }}>{profile.banner || profile.display}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -1813,6 +2031,16 @@ function MemberPage({ t, profile, loading, isMe, isMod, onOpen, onChat, onRelati
               <ExternalLink size={13} /> {name}
             </a>
           ))}
+          {(profile.ao3Works || []).filter((u: string) => /^https:\/\//i.test(u)).length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ color: t.muted, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, margin: "6px 0 4px" }}>FEATURED WORKS</div>
+              {(profile.ao3Works || []).filter((u: string) => /^https:\/\//i.test(u)).map((u: string, i: number) => (
+                <a key={i} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, color: t.accent, fontSize: 13, textDecoration: "none", marginBottom: 5 }}>
+                  <ExternalLink size={12} /> {u.replace(/^https:\/\/(www\.)?archiveofourown\.org\//i, "AO3: ").replace(/^https:\/\//i, "").slice(0, 48)}
+                </a>
+              ))}
+            </div>
+          )}
           <div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{profile.followers + followerDelta} followers</div>
           {profile.flair && <div style={{ color: t.muted, fontSize: 13, marginBottom: 14 }}>{profile.flair}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14, marginTop: 14 }}>
@@ -2010,14 +2238,63 @@ function AppLayout() {
 }
 
 // ----- Routed pages (read URL params, load their own data) -----
+
+// Crawlable pagination for feed/tag lists (SEO §11 #4): "page 2" is a real URL
+// (?page=2) with canonical + rel prev/next, instead of scroll-only content.
+const FEED_PAGE_SIZE = 25;
+
+/** 1-based page number from ?page= (absent/garbage → 1). */
+function usePageParam(): number {
+  const [params] = useSearchParams();
+  const n = parseInt(params.get("page") ?? "1", 10);
+  return Number.isFinite(n) && n > 1 ? n : 1;
+}
+
+function pageUrl(basePath: string, n: number): string {
+  return n <= 1 ? basePath : `${basePath}?page=${n}`;
+}
+
+// ponytail: client-side slicing over the existing full fetch; move to server-side
+// .range() in api.ts when feeds outgrow a single query.
+function paginate(items: UiPost[], requested: number, basePath: string) {
+  const pages = Math.max(1, Math.ceil(items.length / FEED_PAGE_SIZE));
+  const page = Math.min(requested, pages); // out-of-range → last page, canonical follows
+  return {
+    items: items.slice((page - 1) * FEED_PAGE_SIZE, page * FEED_PAGE_SIZE),
+    page,
+    url: pageUrl(basePath, page),
+    prev: page > 1 ? pageUrl(basePath, page - 1) : null,
+    next: page < pages ? pageUrl(basePath, page + 1) : null,
+  };
+}
+
+/** Prev/next as real links so crawlers can reach every page. */
+function Pager({ t, page, prev, next }: any) {
+  if (!prev && !next) return null;
+  const link = { ...relBtn(t, false), textDecoration: "none" };
+  return (
+    <nav aria-label="Pages" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, padding: "16px 0" }}>
+      {prev && <Link to={prev} style={link}>← Previous</Link>}
+      <span style={{ color: t.muted, fontSize: 13 }}>Page {page}</span>
+      {next && <Link to={next} style={link}>Next →</Link>}
+    </nav>
+  );
+}
+
 function LandingRoute() {
   const c: any = useOutletContext();
-  useEffect(() => { setPageMeta({ title: `${community.name} — Wakanda-first fan community`, description: clip(community.blurb), url: "/", type: "website" }); }, []);
-  return <LandingPage t={c.t} posts={c.feed} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} isMod={c.myIsMod} />;
+  const requested = usePageParam();
+  const pg = paginate(c.feed, requested, "/");
+  useEffect(() => {
+    const suffix = pg.page > 1 ? ` (Page ${pg.page})` : "";
+    setPageMeta({ title: `${community.name} — Wakanda-first fan community${suffix}`, description: clip(community.blurb), url: pg.url, type: "website", prev: pg.prev, next: pg.next });
+  }, [pg.url, pg.prev, pg.next]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pg.page]);
+  return <LandingPage t={c.t} posts={pg.items} pager={<Pager t={c.t} page={pg.page} prev={pg.prev} next={pg.next} />} pinned={c.pinned} loading={c.feedLoading} sort={c.sort} onSort={c.changeSort} following={c.following} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} onChanged={c.loadFeed} isMod={c.myIsMod} />;
 }
 
 // Shared list layout for tag-filter and search-result pages.
-function PostListPage({ t, title, sub, action, posts, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
+function PostListPage({ t, title, sub, action, posts, pager, loading, mutedUsers, onOpen, onAuthor, myUsername, emptyText }: any) {
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
       <div style={{ padding: "20px 0 4px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -2032,8 +2309,9 @@ function PostListPage({ t, title, sub, action, posts, loading, mutedUsers, onOpe
       ) : posts.length === 0 ? (
         <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>{emptyText}</div>
       ) : (
-        posts.map((p: UiPost) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} />)
+        posts.map((p: UiPost, i: number) => <PostCard key={p.id} post={p} t={t} onOpen={onOpen} onAuthor={onAuthor} muted={mutedUsers.includes(p.author)} showMeta myUsername={myUsername} eager={i === 0} />)
       )}
+      {!loading && pager}
     </div>
   );
 }
@@ -2049,7 +2327,13 @@ function TagRoute() {
     fetchTagFeed(slug as string).then(setPosts).catch((e) => console.error("tag feed failed", e)).finally(() => setLoading(false));
   }, [slug]);
   const label = POST_FLAIRS[slug as string]?.label ?? slug;
-  useEffect(() => { setPageMeta({ title: `${label} — ${community.name}`, description: `${label} posts on ${community.name}.`, url: `/t/${slug}`, type: "website" }); }, [slug, label]);
+  const requested = usePageParam();
+  const pg = paginate(posts, requested, `/t/${slug}`);
+  useEffect(() => {
+    const suffix = pg.page > 1 ? ` (Page ${pg.page})` : "";
+    setPageMeta({ title: `${label} — ${community.name}${suffix}`, description: `${label} posts on ${community.name}.`, url: pg.url, type: "website", prev: pg.prev, next: pg.next });
+  }, [slug, label, pg.url, pg.prev, pg.next]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pg.page]);
   const followed = c.followedTags?.includes(slug);
   const toggleFollow = () => {
     toggleTagFollow(slug as string, !followed).then(() => c.refreshFollowedTags?.()).catch((e) => console.error("follow toggle failed", e));
@@ -2065,7 +2349,7 @@ function TagRoute() {
       </button>
     </div>
   );
-  return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
+  return <PostListPage t={t} title={label} sub={`Posts tagged ${label}`} action={header} posts={pg.items} pager={<Pager t={t} page={pg.page} prev={pg.prev} next={pg.next} />} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText={`No ${label} posts yet.`} />;
 }
 
 function CollectionRoute() {
@@ -2420,6 +2704,240 @@ function MemberRoute() {
   return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} onSavedProfile={onSavedProfile} myUsername={c.myUsername} />;
 }
 
+// ----- Commission board (MILESTONES §9) -----
+// Two independent lists — artists advertising open slots, and members posting
+// requests. No in-app messaging/matching: contact happens via the listing's
+// link or DMs, same as the rest of the prototype.
+function CommissionFormModal({ t, kind, onClose, onCreated }: any) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priceInfo, setPriceInfo] = useState("");
+  const [contactUrl, setContactUrl] = useState("");
+  const [slotsTotal, setSlotsTotal] = useState(1);
+  const [budget, setBudget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!title.trim()) { setError("Give it a title."); return; }
+    if (kind === "listing" && contactUrl.trim() && !/^https:\/\//i.test(contactUrl.trim())) { setError("Links must start with https://"); return; }
+    setBusy(true); setError(null);
+    try {
+      if (kind === "listing") {
+        await createCommissionListing({ title: title.trim(), description: description.trim(), priceInfo: priceInfo.trim(), contactUrl: contactUrl.trim(), slotsTotal });
+      } else {
+        await createCommissionRequest({ title: title.trim(), description: description.trim(), budget: budget.trim() });
+      }
+      onCreated?.();
+      onClose();
+    } catch (e: any) {
+      setError((e && e.message) || "Couldn't post that.");
+    } finally { setBusy(false); }
+  };
+
+  const fieldStyle: React.CSSProperties = { width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 480, maxWidth: "100%", maxHeight: "85vh", overflow: "auto", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>{kind === "listing" ? "New commission listing" : "New commission request"}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" maxLength={80} style={fieldStyle} />
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional)" rows={4} maxLength={2000}
+          style={{ ...fieldStyle, resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+        {kind === "listing" ? (
+          <>
+            <input value={priceInfo} onChange={(e) => setPriceInfo(e.target.value)} placeholder="Price info (e.g. busts from $25)" maxLength={200} style={fieldStyle} />
+            <input value={contactUrl} onChange={(e) => setContactUrl(e.target.value)} placeholder="Commission info link (Ko-fi, form, optional)" maxLength={300} style={fieldStyle} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <label style={{ color: t.muted, fontSize: 12, fontWeight: 700 }}>Slots open</label>
+              <input type="number" min={1} max={50} value={slotsTotal}
+                onChange={(e) => setSlotsTotal(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                style={{ width: 70, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", color: t.text, boxSizing: "border-box" }} />
+            </div>
+          </>
+        ) : (
+          <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (optional, e.g. $50-100)" maxLength={100} style={fieldStyle} />
+        )}
+        {error && <div style={{ color: t.error, fontSize: 13, marginTop: 4 }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+          <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
+          <button onClick={submit} disabled={busy} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800, opacity: busy ? 0.6 : 1 }}>{busy ? "Posting…" : "Post"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommissionStatusPill({ status, t }: any) {
+  const map: Record<string, { bg: string; fg: string; label: string }> = {
+    open: { bg: "rgba(63,145,66,.15)", fg: "#3f9142", label: "Open" },
+    waitlist: { bg: "rgba(201,154,46,.16)", fg: "#c99a2e", label: "Waitlist" },
+    closed: { bg: "rgba(130,130,130,.18)", fg: t.muted, label: "Closed" },
+    fulfilled: { bg: "rgba(63,145,66,.15)", fg: "#3f9142", label: "Fulfilled" },
+  };
+  const s = map[status] ?? map.closed;
+  return <span style={{ background: s.bg, color: s.fg, borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>{s.label}</span>;
+}
+
+function CommissionListingCard({ listing, t, mine, isMod, onChanged, goUser }: any) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const setStatus = (status: string) => {
+    setBusy(true);
+    updateCommissionListing(listing.id, { status: status as any }).then(onChanged).catch((e) => console.error("listing update failed", e)).finally(() => setBusy(false));
+  };
+  const bumpSlots = (delta: number) => {
+    const next = Math.max(0, Math.min(listing.slotsTotal, listing.slotsFilled + delta));
+    if (next === listing.slotsFilled) return;
+    setBusy(true);
+    updateCommissionListing(listing.id, { slotsFilled: next }).then(onChanged).catch((e) => console.error("listing update failed", e)).finally(() => setBusy(false));
+  };
+  const remove = () => {
+    setBusy(true);
+    deleteCommissionListing(listing.id).then(onChanged).catch((e) => { console.error("listing delete failed", e); setBusy(false); });
+  };
+
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span onClick={() => goUser(listing.artist)} style={{ color: t.heading, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{listing.artistDisplay}</span>
+        <CommissionStatusPill status={listing.status} t={t} />
+        <span style={{ color: t.muted, fontSize: 12, marginLeft: "auto" }}>{timeAgo(listing.createdAt)}</span>
+      </div>
+      <div style={{ color: t.text, fontSize: 16, fontWeight: 800, marginBottom: 4 }}>{listing.title}</div>
+      <div style={{ color: t.muted, fontSize: 13, marginBottom: 6 }}>{listing.slotsFilled} of {listing.slotsTotal} slots filled</div>
+      {listing.description && <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>{listing.description}</div>}
+      {listing.priceInfo && <div style={{ color: t.muted, fontSize: 13, marginBottom: 6 }}>{listing.priceInfo}</div>}
+      {listing.contactUrl && /^https:\/\//i.test(listing.contactUrl) && (
+        <a href={listing.contactUrl} target="_blank" rel="noopener noreferrer" style={{ color: t.link, fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none" }}>
+          Commission info <ExternalLink size={13} />
+        </a>
+      )}
+      {(mine || isMod) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
+          {mine && (
+            <>
+              <select value={listing.status} disabled={busy} onChange={(e) => setStatus(e.target.value)}
+                style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+                <option value="open">Open</option>
+                <option value="waitlist">Waitlist</option>
+                <option value="closed">Closed</option>
+              </select>
+              <button onClick={() => bumpSlots(-1)} disabled={busy || listing.slotsFilled <= 0} style={{ ...relBtn(t), padding: "5px 10px", fontSize: 12 }} title="One fewer slot filled"><ArrowDown size={13} /></button>
+              <button onClick={() => bumpSlots(1)} disabled={busy || listing.slotsFilled >= listing.slotsTotal} style={{ ...relBtn(t), padding: "5px 10px", fontSize: 12 }} title="One more slot filled"><ArrowUp size={13} /></button>
+            </>
+          )}
+          <button onClick={() => setConfirming(true)} disabled={busy} style={{ ...relBtn(t), padding: "5px 12px", fontSize: 12, color: t.error, marginLeft: mine ? 0 : "auto" }}>{mine ? "Delete" : "Remove"}</button>
+        </div>
+      )}
+      {confirming && <ConfirmDialog t={t} title={mine ? "Delete this listing?" : "Remove this listing?"} message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+    </div>
+  );
+}
+
+function CommissionRequestCard({ request, t, mine, isMod, onChanged, goUser }: any) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const setStatus = (status: string) => {
+    setBusy(true);
+    updateCommissionRequest(request.id, { status: status as any }).then(onChanged).catch((e) => console.error("request update failed", e)).finally(() => setBusy(false));
+  };
+  const remove = () => {
+    setBusy(true);
+    deleteCommissionRequest(request.id).then(onChanged).catch((e) => { console.error("request delete failed", e); setBusy(false); });
+  };
+
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span onClick={() => goUser(request.requester)} style={{ color: t.heading, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{request.requesterDisplay}</span>
+        <CommissionStatusPill status={request.status} t={t} />
+        <span style={{ color: t.muted, fontSize: 12, marginLeft: "auto" }}>{timeAgo(request.createdAt)}</span>
+      </div>
+      <div style={{ color: t.text, fontSize: 16, fontWeight: 800, marginBottom: 4 }}>{request.title}</div>
+      {request.budget && <div style={{ color: t.muted, fontSize: 13, marginBottom: 6 }}>Budget: {request.budget}</div>}
+      {request.description && <div style={{ color: t.text, fontSize: 14, lineHeight: 1.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>{request.description}</div>}
+      {(mine || isMod) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
+          {mine && (
+            <select value={request.status} disabled={busy} onChange={(e) => setStatus(e.target.value)}
+              style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+              <option value="open">Open</option>
+              <option value="fulfilled">Fulfilled</option>
+              <option value="closed">Closed</option>
+            </select>
+          )}
+          <button onClick={() => setConfirming(true)} disabled={busy} style={{ ...relBtn(t), padding: "5px 12px", fontSize: 12, color: t.error, marginLeft: mine ? 0 : "auto" }}>{mine ? "Delete" : "Remove"}</button>
+        </div>
+      )}
+      {confirming && <ConfirmDialog t={t} title={mine ? "Delete this request?" : "Remove this request?"} message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
+    </div>
+  );
+}
+
+function CommissionsPage({ t, myUsername, myIsMod, goUser }: any) {
+  const [tab, setTab] = useState<"listings" | "requests">("listings");
+  const [listings, setListings] = useState<UiCommissionListing[]>([]);
+  const [requests, setRequests] = useState<UiCommissionRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([listCommissionListings(), listCommissionRequests()])
+      .then(([l, r]) => { setListings(l); setRequests(r); })
+      .catch((e) => console.error("commission board load failed", e))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { window.scrollTo(0, 0); load(); }, []);
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+      <div style={{ padding: "20px 0 4px" }}>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Commission Board</h1>
+        <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>Artists advertise open slots; members post what they're looking for.</div>
+      </div>
+      <div style={{ border: `1px solid ${t.border}`, background: t.panel2, borderRadius: 12, padding: "12px 16px", margin: "12px 0", color: t.muted, fontSize: 13, lineHeight: 1.6 }}>
+        <div style={{ color: t.text, fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Shield size={14} /> Community guidelines</div>
+        Agree on price and scope up front · Payment is handled off-site between you · No harassment over turnaround times · Mods may remove listings or requests that break the rules.
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0", flexWrap: "wrap" }}>
+        <button onClick={() => setTab("listings")} style={relBtn(t, tab === "listings")}>Artists open</button>
+        <button onClick={() => setTab("requests")} style={relBtn(t, tab === "requests")}>Requests</button>
+        {myUsername && (
+          <button onClick={() => setShowForm(true)} style={{ ...relBtn(t), marginLeft: "auto", background: t.accent, color: t.accentText, border: "none" }}>
+            <Plus size={14} /> {tab === "listings" ? "New listing" : "New request"}
+          </button>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : tab === "listings" ? (
+        listings.length === 0 ? (
+          <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No open commissions yet — be the first artist to post your slots.</div>
+        ) : listings.map((l) => <CommissionListingCard key={l.id} listing={l} t={t} mine={l.artist === myUsername} isMod={myIsMod} onChanged={load} goUser={goUser} />)
+      ) : requests.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No commission requests yet — post what you're looking for.</div>
+      ) : (
+        requests.map((r) => <CommissionRequestCard key={r.id} request={r} t={t} mine={r.requester === myUsername} isMod={myIsMod} onChanged={load} goUser={goUser} />)
+      )}
+      {showForm && <CommissionFormModal t={t} kind={tab === "listings" ? "listing" : "request"} onClose={() => setShowForm(false)} onCreated={load} />}
+    </div>
+  );
+}
+
+function CommissionsRoute() {
+  const c: any = useOutletContext();
+  useEffect(() => {
+    setPageMeta({ title: `Commission Board — ${community.name}`, description: "Artists advertise open commission slots; members post what they're looking for.", url: "/commissions", type: "website" });
+  }, []);
+  return <CommissionsPage t={c.t} myUsername={c.myUsername} myIsMod={c.myIsMod} goUser={c.goUser} />;
+}
+
 // ----- Auth gate + route table -----
 function centeredStyle(t: Palette): React.CSSProperties {
   return { minHeight: "100vh", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "Inter, system-ui, sans-serif" };
@@ -2473,6 +2991,7 @@ export default function AppRoutes() {
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
+        <Route path="commissions" element={<CommissionsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
