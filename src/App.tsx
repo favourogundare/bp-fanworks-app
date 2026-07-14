@@ -92,12 +92,12 @@ const OP_REASONING =
 // re-flair) where a wrapping span owns the click to toggle selection.
 function Flair({ flairKey, plain = false }: any) {
   const f = POST_FLAIRS[flairKey];
-  const navigate = useNavigate();
   if (!f) return null;
   const base = { background: f.bg, color: f.fg, borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 };
   if (plain) return <span style={base}>{f.label}</span>;
-  return <span onClick={(e) => { e.stopPropagation(); navigate(`/t/${flairKey}`); }} title={`See all ${f.label} posts`}
-    style={{ ...base, cursor: "pointer" }}>{f.label}</span>;
+  // Real link (SEO §11 #6): crawlers reach /t/:slug from every flair chip.
+  return <Link to={`/t/${flairKey}`} onClick={(e) => e.stopPropagation()} title={`See all ${f.label} posts`}
+    style={{ ...base, cursor: "pointer", textDecoration: "none", display: "inline-block" }}>{f.label}</Link>;
 }
 
 // Signed-in member's content prefs, provided by AppLayout (blur pref reaches MediaBlock without prop drilling).
@@ -856,7 +856,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
   if (muted) {
     return <div style={{ borderBottom: `1px solid ${t.border}`, padding: "14px 0", color: t.muted, fontSize: 13, fontStyle: "italic" }}>
       Post hidden — you muted{" "}
-      <span onClick={() => onAuthor(post.author)} {...hoverHandlers} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700 }}>{post.author}</span>. Open their profile to unmute.
+      <Link to={`/user/${post.author}`} {...hoverHandlers} style={{ color: t.heading, cursor: "pointer", fontStyle: "normal", fontWeight: 700, textDecoration: "none" }}>{post.author}</Link>. Open their profile to unmute.
     </div>;
   }
   if (spoilerHit.length > 0 && !revealed) {
@@ -877,7 +877,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
     <div style={{ borderBottom: `1px solid ${t.border}`, padding: "16px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }} onClick={() => onOpen(post)}>
         <Avatar seed={post.author} size={26} t={t} />
-        <span onClick={(e) => { e.stopPropagation(); onAuthor(post.author); }} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading }}>{post.author}</span>
+        <Link to={`/user/${post.author}`} onClick={(e) => e.stopPropagation()} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading, textDecoration: "none" }}>{post.author}</Link>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
         {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
         {mine && (
@@ -912,7 +912,9 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         </div>
       ) : (
       <div style={{ cursor: "pointer" }} onClick={() => onOpen(post)}>
-        <h3 style={{ fontSize: 19, fontWeight: 700, color: t.text, margin: "0 0 8px" }}>{post.title}</h3>
+        <h3 style={{ fontSize: 19, fontWeight: 700, margin: "0 0 8px" }}>
+          <Link to={`/post/${post.id}`} onClick={(e) => e.stopPropagation()} style={{ color: t.text, textDecoration: "none" }}>{post.title}</Link>
+        </h3>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         <ContentWarningGate warnings={post.warnings} t={t}>
           <p style={{ fontSize: 14, color: t.muted, margin: "0 0 10px", lineHeight: 1.5 }}>{post.body}</p>
@@ -1018,6 +1020,11 @@ function CommunitySidebar({ t }) {
           </a>
         );
       })}
+      {/* Tag index (SEO §11 #6): every tag page linked from the sidebar so none is orphaned. */}
+      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "16px 0 10px" }}>BROWSE TAGS</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {Object.keys(POST_FLAIRS).map((k) => <Flair key={k} flairKey={k} />)}
+      </div>
       <div style={{ color: t.heading, fontSize: 12, fontWeight: 800, letterSpacing: 0.5, margin: "16px 0 4px" }}>BLACK PANTHER FANWORKS RULES</div>
       {community.rules.map((r, i) => <Rule key={i} rule={r} index={i} t={t} last={i === community.rules.length - 1} />)}
     </div>
@@ -1493,7 +1500,9 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             </div>
           )}
         </div>
-        <div style={{ color: t.muted, fontSize: 12, marginBottom: 6, cursor: "pointer" }} onClick={() => onAuthor(post.author)} {...hoverHandlers}>{post.author}</div>
+        <div style={{ fontSize: 12, marginBottom: 6 }}>
+          <Link to={`/user/${post.author}`} {...hoverHandlers} style={{ color: t.muted, cursor: "pointer", textDecoration: "none" }}>{post.author}</Link>
+        </div>
         {editing ? (
           <div style={{ marginBottom: 14 }}>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title"
