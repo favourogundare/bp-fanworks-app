@@ -15,6 +15,8 @@ import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembersh
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
+import { fetchLatestTjadaka } from "./lib/tjadaka";
+import type { TjadakaPost } from "./lib/tjadaka";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -1075,6 +1077,33 @@ function BookmarkAddRow({ t, onChanged }: any) {
 }
 
 // ----- Community sidebar -----
+// "Latest from T'Jadaka" (MILESTONES §12): newest posts from the source
+// fiction's WordPress blog, linking back out. Renders nothing while loading
+// or when the fetch fails — the sidebar must never break on a remote outage.
+function TjadakaLatest({ t }: any) {
+  const [posts, setPosts] = useState<TjadakaPost[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetchLatestTjadaka().then((p) => { if (alive) setPosts(p); }).catch((e) => console.error("tjadaka fetch failed", e));
+    return () => { alive = false; };
+  }, []);
+  if (posts.length === 0) return null;
+  return (
+    <>
+      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "16px 0 10px" }}>LATEST FROM T'JADAKA</div>
+      {posts.map((p) => (
+        <a key={p.id} href={p.link} target="_blank" rel="noopener noreferrer"
+          style={{ display: "block", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 8, textDecoration: "none" }}>
+          {p.cover && <img src={p.cover} alt="" loading="lazy" style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 8, marginBottom: 8 }} />}
+          <div style={{ color: t.text, fontSize: 13, fontWeight: 700, lineHeight: 1.35 }}>{p.title}</div>
+          {p.excerpt && <div style={{ color: t.muted, fontSize: 12, lineHeight: 1.45, marginTop: 4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{p.excerpt}</div>}
+          <div style={{ color: t.muted, fontSize: 11, marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>{p.when} · Read on tjadaka.com <ExternalLink size={11} /></div>
+        </a>
+      ))}
+    </>
+  );
+}
+
 function CommunitySidebar({ t, isMod }: any) {
   const navigate = useNavigate();
   const [stats, setStats] = useState<{ members: number; contributions: number } | null>(null);
@@ -1179,6 +1208,7 @@ function CommunitySidebar({ t, isMod }: any) {
         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, borderRadius: 999, padding: "9px 0", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: "pointer", textDecoration: "none" }}>
         Read the fiction on tjadaka.com <ExternalLink size={13} />
       </a>
+      <TjadakaLatest t={t} />
       {/* Tag index (SEO §11 #6): every tag page linked from the sidebar so none is orphaned. */}
       <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "16px 0 10px" }}>BROWSE TAGS</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
