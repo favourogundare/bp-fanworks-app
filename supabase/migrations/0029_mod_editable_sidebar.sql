@@ -10,7 +10,7 @@
 -- A bookmark links either to an internal route (`route`) OR to a pinned post
 -- matched by title regex (`pinned_match`) — never a hardcoded post id, exactly
 -- like the current frontend `bookmarkPath()` logic.
-create table sidebar_bookmarks (
+create table if not exists sidebar_bookmarks (
   id           uuid primary key default gen_random_uuid(),
   label        text not null,
   route        text,               -- e.g. '/t/fanfiction'
@@ -21,13 +21,14 @@ create table sidebar_bookmarks (
     check (route is not null or pinned_match is not null)
 );
 
-create index sidebar_bookmarks_position_idx on sidebar_bookmarks (position);
+create index if not exists sidebar_bookmarks_position_idx on sidebar_bookmarks (position);
 
 -- ----- RLS ------------------------------------------------------------------
 -- World-readable (the sidebar is public). No client write policy at all, so
 -- direct INSERT/UPDATE/DELETE from an anon/authenticated key is denied by RLS.
 -- All writes must go through the mod RPCs below. (Same shape as `flairs`.)
 alter table sidebar_bookmarks enable row level security;
+drop policy if exists sidebar_bookmarks_select on sidebar_bookmarks;
 create policy sidebar_bookmarks_select on sidebar_bookmarks for select using (true);
 
 -- ----- mod write RPCs (SECURITY DEFINER, gated by is_mod) --------------------
@@ -82,8 +83,13 @@ end;
 $$;
 
 -- ----- seed: current hardcoded bookmarks (App.tsx community.bookmarks) -------
-insert into sidebar_bookmarks (label, route, pinned_match, position) values
+-- Only seed when the table is empty, so a re-run / branch resync doesn't
+-- duplicate the rows (there's no natural unique key besides the uuid id).
+insert into sidebar_bookmarks (label, route, pinned_match, position)
+select v.label, v.route, v.pinned_match, v.position from (values
   ('Wiki',                      null,            'lore megathread', 0),
   ('Fanfic Archive',            '/t/fanfiction', null,             1),
   ('Weekly Self-Promo Thread',  null,            'self-promo',      2),
-  ('Commission Board',          '/commissions',  null,             3);
+  ('Commission Board',          '/commissions',  null,             3)
+) as v(label, route, pinned_match, position)
+where not exists (select 1 from sidebar_bookmarks);
