@@ -2,6 +2,7 @@
 // migration 0007. Each is gated server-side by is_mod(); the UI only shows them
 // to mods, but the database is the real enforcement.
 import { supabase } from './supabase'
+import { getMyProfileId } from './api'
 
 export async function modSetPinned(postId: string, pinned: boolean): Promise<void> {
   const { error } = await supabase.rpc('mod_set_pinned', { p_post: postId, p_pinned: pinned })
@@ -147,6 +148,41 @@ export async function modSetCommentSticky(commentId: string, on: boolean): Promi
 
 export async function modAssignMemberFlair(profileId: string, slug: string | null): Promise<void> {
   const { error } = await supabase.rpc('mod_assign_member_flair', { p_profile: profileId, p_slug: slug })
+  if (error) throw error
+}
+
+// ----- saved responses (canned mod replies, MILESTONES §9) -----
+
+export interface UiSavedResponse {
+  id: string
+  title: string
+  body: string
+}
+
+/** All saved responses, newest first (mods only via RLS). */
+export async function fetchSavedResponses(): Promise<UiSavedResponse[]> {
+  const { data, error } = await supabase
+    .from('mod_saved_responses')
+    .select('id, title, body')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as UiSavedResponse[]
+}
+
+export async function createSavedResponse(title: string, body: string): Promise<UiSavedResponse> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { data, error } = await supabase
+    .from('mod_saved_responses')
+    .insert({ title: title.trim(), body: body.trim(), created_by: me })
+    .select('id, title, body')
+    .single()
+  if (error) throw error
+  return data as UiSavedResponse
+}
+
+export async function deleteSavedResponse(id: string): Promise<void> {
+  const { error } = await supabase.from('mod_saved_responses').delete().eq('id', id)
   if (error) throw error
 }
 
