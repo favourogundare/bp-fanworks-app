@@ -7,7 +7,7 @@
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
 import { PROFILE_THEMES } from './palettes'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
+import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -1258,17 +1258,20 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
 
 // ----- circles (public sub-communities; MILESTONES §9 Phase 1) -----
 
-const CIRCLE_FIELDS = 'id, slug, name, description, creator_id, created_at, circle_members(count)'
+const CIRCLE_FIELDS = 'id, slug, name, description, creator_id, visibility, created_at, circle_members(count)'
 
-function mapCircle(r: Row, mine: Set<string>): UiCircle {
+function mapCircle(r: Row, mine: Map<string, 'member' | 'mod'>): UiCircle {
+  const myRole = mine.get(r.id) ?? null
   return {
     id: r.id,
     slug: r.slug,
     name: r.name,
     description: r.description ?? '',
     creatorId: r.creator_id,
+    visibility: r.visibility === 'private' ? 'private' : 'public',
     members: r.circle_members?.[0]?.count ?? 0,
-    joined: mine.has(r.id),
+    joined: myRole !== null,
+    myRole,
     createdAt: r.created_at,
   }
 }
@@ -1294,23 +1297,23 @@ function mapCommissionListing(r: Row): UiCommissionListing {
   }
 }
 
-/** The signed-in member's circle ids (empty set when signed out). */
-async function myCircleIds(): Promise<Set<string>> {
+/** The signed-in member's circle roles by circle id (empty map when signed out). */
+async function myCircleRoles(): Promise<Map<string, 'member' | 'mod'>> {
   const me = await getMyProfileId()
-  if (!me) return new Set()
+  if (!me) return new Map()
   const { data, error } = await supabase
     .from('circle_members')
-    .select('circle_id')
+    .select('circle_id, role')
     .eq('profile_id', me)
   if (error) throw error
-  return new Set((data ?? []).map((r: Row) => r.circle_id))
+  return new Map((data ?? []).map((r: Row) => [r.circle_id, r.role === 'mod' ? 'mod' : 'member']))
 }
 
 /** All circles for the /circles directory, biggest first. */
 export async function listCircles(): Promise<UiCircle[]> {
   const [{ data, error }, mine] = await Promise.all([
     supabase.from('circles').select(CIRCLE_FIELDS),
-    myCircleIds(),
+    myCircleRoles(),
   ])
   if (error) throw error
   return (data ?? [])
@@ -1322,21 +1325,60 @@ export async function listCircles(): Promise<UiCircle[]> {
 export async function fetchCircle(slug: string): Promise<UiCircle | null> {
   const [{ data, error }, mine] = await Promise.all([
     supabase.from('circles').select(CIRCLE_FIELDS).eq('slug', slug).maybeSingle(),
-    myCircleIds(),
+    myCircleRoles(),
   ])
   if (error) throw error
   return data ? mapCircle(data, mine) : null
 }
 
 /** Create a circle via the spam-guarded RPC; returns the new circle id. */
-export async function createCircle(input: { slug: string; name: string; description?: string }): Promise<string> {
+export async function createCircle(input: { slug: string; name: string; description?: string; visibility?: 'public' | 'private' }): Promise<string> {
   const { data, error } = await supabase.rpc('create_circle', {
     p_slug: input.slug.trim(),
     p_name: input.name.trim(),
     p_description: (input.description ?? '').trim(),
+    p_visibility: input.visibility ?? 'public',
   })
   if (error) throw error
   return data as string
+}
+
+/** Members of a circle for the mod panel: mods first, then by join time. */
+export async function fetchCircleMembers(circleId: string): Promise<UiCircleMember[]> {
+  const { data, error } = await supabase
+    .from('circle_members')
+    .select('profile_id, role, joined_at, profile:profiles(username, display_name), circle:circles(creator_id)')
+    .eq('circle_id', circleId)
+    .order('joined_at', { ascending: true })
+  if (error) throw error
+  return (data ?? [])
+    .map((r: Row): UiCircleMember => ({
+      profileId: r.profile_id,
+      username: r.profile?.username ?? 'unknown',
+      displayName: r.profile?.display_name || r.profile?.username || 'unknown',
+      role: r.role === 'mod' ? 'mod' : 'member',
+      isCreator: r.circle?.creator_id === r.profile_id,
+      joinedAt: r.joined_at,
+    }))
+    .sort((a, b) => Number(b.isCreator) - Number(a.isCreator) || Number(b.role === 'mod') - Number(a.role === 'mod'))
+}
+
+/** Invite/add a member to a circle by username (circle mods only). */
+export async function circleAddMember(circleId: string, username: string): Promise<void> {
+  const { error } = await supabase.rpc('circle_add_member', { p_circle: circleId, p_username: username.trim() })
+  if (error) throw error
+}
+
+/** Promote or demote a member between 'member' and 'mod' (circle mods only). */
+export async function circleSetRole(circleId: string, profileId: string, role: 'member' | 'mod'): Promise<void> {
+  const { error } = await supabase.rpc('circle_set_role', { p_circle: circleId, p_profile: profileId, p_role: role })
+  if (error) throw error
+}
+
+/** Remove a member from a circle (circle mods only). */
+export async function circleRemoveMember(circleId: string, profileId: string): Promise<void> {
+  const { error } = await supabase.rpc('circle_remove_member', { p_circle: circleId, p_profile: profileId })
+  if (error) throw error
 }
 
 /** Join a circle as the signed-in member. */

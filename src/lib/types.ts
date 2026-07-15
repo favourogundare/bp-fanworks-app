@@ -42,9 +42,21 @@ export interface UiCircle {
   name: string
   description: string
   creatorId: string
+  visibility: 'public' | 'private'
   members: number
   joined: boolean // is the signed-in member a member of this circle
+  myRole: 'member' | 'mod' | null // the signed-in member's role, null if not a member
   createdAt: string
+}
+
+// A member of a circle, for the per-circle mod panel.
+export interface UiCircleMember {
+  profileId: string
+  username: string
+  displayName: string
+  role: 'member' | 'mod'
+  isCreator: boolean
+  joinedAt: string
 }
 
 // Community wiki (MILESTONES §9): collaborative pages with revision history.
