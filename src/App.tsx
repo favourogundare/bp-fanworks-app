@@ -22,7 +22,8 @@ import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
+import type { UiModAction } from "./lib/mod";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
 import { goldPair, neutralPair, PROFILE_THEMES, applyProfileTheme, profileHeaderGradient } from "./lib/palettes";
@@ -738,7 +739,7 @@ function FmtToolbar({ taRef, value, onChange, t }: any) {
 const collapsedComments = new Set<string>();
 const countReplies = (c: any): number => (c.replies ?? []).reduce((n: number, r: any) => n + 1 + countReplies(r), 0);
 
-function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any) {
+function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locked }: any) {
   const [collapsed, setCollapsed] = useState(collapsedComments.has(c.id));
   const toggleCollapsed = () => {
     const next = !collapsed;
@@ -810,7 +811,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 16, color: t.muted, fontSize: 12, fontWeight: 600 }}>
             <Vote votes={c.votes} t={t} targetType="comment" targetId={c.id} />
-            <span onClick={() => setReplying(!replying)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><MessageCircle size={14} /> Reply</span>
+            {!locked && <span onClick={() => setReplying(!replying)} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}><MessageCircle size={14} /> Reply</span>}
             <span onClick={toggleSave} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: saved ? t.accent : undefined }}><Bookmark size={14} fill={saved ? "currentColor" : "none"} /> {saved ? "Saved" : "Save"}</span>
             {mine && <span onClick={() => setEditing(!editing)} style={{ cursor: "pointer" }}>Edit</span>}
             {mine && <span onClick={() => setConfirming(true)} style={{ cursor: busy ? "default" : "pointer", color: "#e0726b", opacity: busy ? 0.6 : 1 }}>Delete</span>}
@@ -818,7 +819,7 @@ function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor }: any
             <span onClick={copyCommentLink} title="Copy a direct link to this comment" style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", color: linkCopied ? t.accent : undefined }}><Share2 size={14} /> {linkCopied ? "Link copied!" : "Share"}</span>
           </div>
           {replying && <CommentComposer t={t} postId={postId} parentId={c.id} placeholder={`Reply to ${c.author}…`} onAdded={onAdded} onCancel={() => setReplying(false)} />}
-          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
+          {c.replies?.map((r) => <Comment key={r.id} c={r} t={t} depth={depth + 1} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} />)}
         </div>
       )}
       {confirming && <ConfirmDialog t={t} title="Delete comment?" message="Your comment will show as “[deleted]”. Replies to it stay." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
@@ -1613,17 +1614,30 @@ function modBtn(t: any) {
 
 // ----- Moderator action bar (posts) -----
 function ModBar({ post, t, onChanged, onRemoved }: any) {
+  const navigate = useNavigate();
   const [reflair, setReflair] = useState(false);
   const [sel, setSel] = useState<string[]>(post.flairs || []);
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [reason, setReason] = useState("");
   const run = async (fn: any) => { setBusy(true); try { await fn(); } catch (e) { console.error("mod action failed", e); } finally { setBusy(false); } };
   const toggle = (k: string) => setSel((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   return (
     <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 10, margin: "12px 0", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
       <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.heading, fontSize: 12, fontWeight: 800 }}><Shield size={13} /> MOD</span>
       <button onClick={() => run(async () => { await modSetPinned(post.id, !post.pinned); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Pin size={13} /> {post.pinned ? "Unpin" : "Pin"}</button>
+      <button onClick={() => run(async () => { await modSetLocked(post.id, !post.locked); onChanged?.(); })} disabled={busy} style={modBtn(t)}><Lock size={13} /> {post.locked ? "Unlock comments" : "Lock comments"}</button>
       <button onClick={() => setReflair(!reflair)} style={modBtn(t)}>Re-flair</button>
-      <button onClick={() => { if (window.confirm("Remove this post?")) run(async () => { await modRemovePost(post.id); onRemoved?.(); }); }} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      <button onClick={() => setRemoving(!removing)} disabled={busy} style={{ ...modBtn(t), color: "#e0726b" }}>Remove</button>
+      <button onClick={() => navigate("/mod/log")} style={modBtn(t)}>Log</button>
+      {removing && (
+        <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Removal reason (recorded in the mod log)"
+            style={{ flex: 1, background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "7px 10px", fontSize: 13, outline: "none" }} />
+          <button onClick={() => run(async () => { await modRemovePost(post.id, reason.trim()); onRemoved?.(); })} disabled={busy}
+            style={{ ...modBtn(t), background: "#e0726b", color: "#1a0b0b", fontWeight: 800 }}>Confirm remove</button>
+        </div>
+      )}
       {reflair && (
         <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
           {Object.keys(POST_FLAIRS).map((k) => { const on = sel.includes(k); return <span key={k} onClick={() => toggle(k)} style={{ cursor: "pointer", outline: on ? `2px solid ${t.accent}` : "none", borderRadius: 5, opacity: on ? 1 : 0.5 }}><Flair flairKey={k} plain /></span>; })}
@@ -1684,7 +1698,7 @@ const COMMENT_BATCH = 25;
 // Top-level comments render in batches with a "load more" button. A
 // #comment-<id> permalink expands collapsed ancestors, force-includes its
 // batch, and scrolls the target into view.
-function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor }: any) {
+function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor, locked }: any) {
   const targetId = window.location.hash.startsWith("#comment-") ? window.location.hash.slice("#comment-".length) : null;
   // Path from a top-level comment to the target (indices of ancestors), or null.
   const findPath = (c: any, id: string): any[] | null => {
@@ -1713,7 +1727,7 @@ function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor }: any
   const remaining = comments.length - visible.length;
   return (
     <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 8 }}>
-      {visible.map((c: any) => <Comment key={c.id} c={c} t={t} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} />)}
+      {visible.map((c: any) => <Comment key={c.id} c={c} t={t} postId={postId} onAdded={onAdded} myUsername={myUsername} onAuthor={onAuthor} locked={locked} />)}
       {remaining > 0 && (
         <button onClick={() => setShown(shown + COMMENT_BATCH)} style={{ ...relBtn(t), marginTop: 14, width: "100%", padding: "9px 0" }}>
           Load {Math.min(remaining, COMMENT_BATCH)} more {remaining === 1 ? "comment" : "comments"} ({remaining} hidden)
@@ -1862,7 +1876,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
           </div>
         ) : (
         <>
-        <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px" }}>{post.title}</h1>
+        <h1 style={{ color: t.text, fontSize: 26, fontWeight: 800, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 10 }}>{post.title}{post.locked && <Lock size={18} color={t.accent} aria-label="Comments locked" />}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>{post.flairs?.map((f) => <Flair key={f} flairKey={f} />)}</div>
         <ContentWarningGate warnings={post.warnings} t={t}>
           {post.body && <div style={reading
@@ -1883,8 +1897,14 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         </div>
         <CollectionTagger t={t} postId={post.id} />
         {isMod && <ModBar post={post} t={t} onChanged={onCommentAdded} onRemoved={onRemoved} />}
-        <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
-        <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />
+        {post.locked && !isMod ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${t.border}`, borderRadius: 10, padding: "12px 14px", color: t.muted, fontSize: 13 }}>
+            <Lock size={15} /> Comments are locked on this post.
+          </div>
+        ) : (
+          <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
+        )}
+        <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} locked={post.locked && !isMod} />
       </div>
       {managing && <CoauthorsModal t={t} post={post} onClose={() => setManaging(false)} onChanged={onCommentAdded} />}
       {!reading && <div><CommunitySidebar t={t} isMod={isMod} /></div>}
@@ -2655,6 +2675,49 @@ function SearchRoute() {
   }, [q]);
   useEffect(() => { setPageMeta({ title: `Search — ${community.name}`, description: community.blurb, url: "/search", type: "website" }); }, []);
   return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
+}
+
+// Mod-only audit log (/mod/log): who did what, when, why.
+function ModLogRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<UiModAction[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    setPageMeta({ title: `Mod log — ${community.name}` });
+    fetchModLog().then(setRows).catch((e) => console.error("mod log load failed", e)).finally(() => setLoading(false));
+  }, []);
+  // RLS already hides rows from non-mods; this just avoids a confusing empty page.
+  if (!c.myIsMod) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>Mods only.</div>;
+  const ACTION_LABELS: Record<string, string> = {
+    remove_post: "removed a post", pin_post: "pinned a post", unpin_post: "unpinned a post",
+    lock_comments: "locked comments", unlock_comments: "unlocked comments",
+    set_post_flairs: "re-flaired a post", assign_member_flair: "assigned member flair",
+  };
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ padding: "20px 0 4px", display: "flex", alignItems: "center", gap: 10 }}>
+        <Shield size={20} color={t.accent} />
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>Mod log</h1>
+        <button onClick={() => navigate(-1)} style={{ ...relBtn(t), marginLeft: "auto", padding: "5px 14px", fontSize: 12 }}>Back</button>
+      </div>
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>No mod actions recorded yet.</div>
+      ) : (
+        rows.map((r) => (
+          <div key={r.id} style={{ borderBottom: `1px solid ${t.border}`, padding: "12px 0", display: "flex", gap: 10, alignItems: "baseline" }}>
+            <span style={{ color: t.heading, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{r.mod}</span>
+            <span style={{ color: t.text, fontSize: 13 }}>{ACTION_LABELS[r.action] ?? r.action}{r.detail ? <span style={{ color: t.muted }}> — {r.detail}</span> : null}</span>
+            <span style={{ color: t.muted, fontSize: 12, marginLeft: "auto", flexShrink: 0 }}>{timeAgo(r.when)} ago</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
 }
 
 function InboxRoute() {
@@ -3778,6 +3841,7 @@ export default function AppRoutes() {
         <Route path="search" element={<SearchRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="inbox" element={<InboxRoute />} />
+        <Route path="mod/log" element={<ModLogRoute />} />
         <Route path="wiki" element={<WikiIndexRoute />} />
         <Route path="wiki/:slug" element={<WikiPageRoute />} />
         <Route path="wiki/:slug/history" element={<WikiHistoryRoute />} />

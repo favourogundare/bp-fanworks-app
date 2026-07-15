@@ -239,7 +239,7 @@ export async function fetchMyPostInsights(postId: string): Promise<PostInsights 
 // author embed names its FK: poll_votes added a second posts<->profiles path
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
-  'id, title, body, type, pinned, profile_pinned_at, archived_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
+  'id, title, body, type, pinned, profile_pinned_at, locked_at, archived_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
   'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count), circle:circles(slug, name), ' +
   'post_coauthors(profile:profiles(username))'
 
@@ -262,6 +262,7 @@ function mapPost(row: Row): UiPost {
     pollOptions: Array.isArray(row.poll_options) ? (row.poll_options as string[]) : [],
     warnings: Array.isArray(row.content_warnings) ? (row.content_warnings as string[]) : [],
     pinned: !!row.pinned,
+    locked: !!row.locked_at,
     profilePinned: !!row.profile_pinned_at,
     archived: !!row.archived_at,
     commentCount: row.comments?.[0]?.count ?? 0,
