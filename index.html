@@ -17,6 +17,11 @@
       })();
     </script>
     <meta name="color-scheme" content="light dark" />
+    <!-- CWV: all avatars/post media come from Supabase storage; warm the
+         connection before the app bundle even parses. Hero logo renders
+         above the fold on every landing view, so fetch it early too. -->
+    <link rel="preconnect" href="https://wawboysisdqmzvpentfu.supabase.co" crossorigin />
+    <link rel="preload" as="image" href="/bpf-home.png" />
     <link rel="icon" type="image/png" href="/BP%20Chain%20Small.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Black Panther Fanworks</title>
