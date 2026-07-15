@@ -14,10 +14,15 @@ import { next } from '@vercel/edge'
 // Only these routes need rich previews. Everything else — assets, /search,
 // /saved, /t/:slug — never invokes the middleware and is served normally.
 export const config = {
-  matcher: ['/', '/post/:id', '/user/:username'],
+  matcher: ['/', '/post/:id', '/user/:username', '/t/:slug'],
 }
 
 const SITE = 'Black Panther Fanworks'
+
+// Canonical/OG URLs always point at production: building them from the request
+// origin would emit *.vercel.app canonicals on preview deploys and split
+// search-index signals across hosts.
+const CANONICAL_ORIGIN = 'https://blackpantherfanworks.com'
 
 const COMMUNITY = {
   name: SITE,
@@ -71,6 +76,26 @@ type Meta = {
   type: 'website' | 'article' | 'profile'
   // schema.org JSON-LD objects rendered as <script type="application/ld+json">
   jsonLd: Record<string, unknown>[]
+  // Social-card enrichment (all optional). imageWidth/Height only set for the
+  // known default image; article*/profileUsername only for their route types.
+  imageAlt?: string
+  imageWidth?: number
+  imageHeight?: number
+  publishedTime?: string
+  authorUrl?: string
+  profileUsername?: string
+}
+
+// Intrinsic size of the bundled default share image (/bpf-home.png). Emitting
+// og:image:width/height for it lets Discord/Facebook render the large card
+// immediately instead of deferring until they fetch and measure the file.
+const DEFAULT_IMAGE_W = 1365
+const DEFAULT_IMAGE_H = 768
+
+/** Dimensions for the default image, or {} for an unknown uploaded cover
+ *  (those stay dimensionless — platforms fetch-and-measure, as before). */
+function imageDims(image: string, defaultImage: string): Pick<Meta, 'imageWidth' | 'imageHeight'> {
+  return image === defaultImage ? { imageWidth: DEFAULT_IMAGE_W, imageHeight: DEFAULT_IMAGE_H } : {}
 }
 
 /** Collapse whitespace and clip to `n` chars for a meta description. */
@@ -116,7 +141,7 @@ function breadcrumbNode(origin: string, crumb?: { name: string; url: string }): 
 
 /** Look up per-route data and build the meta, or null if the route/row is unknown. */
 async function buildMeta(url: URL): Promise<Meta | null> {
-  const origin = url.origin
+  const origin = CANONICAL_ORIGIN
   const defaultImage = `${origin}/bpf-home.png`
   const path = url.pathname
 
@@ -140,6 +165,10 @@ async function buildMeta(url: URL): Promise<Meta | null> {
       title: `${String(post.title)} — ${SITE}`,
       description: clip(post.body) || clip(COMMUNITY.blurb),
       image,
+      imageAlt: `${authorName}: ${clip(post.title, 90)}`,
+      ...imageDims(image, defaultImage),
+      ...(post.created_at ? { publishedTime: String(post.created_at) } : {}),
+      ...(authorUrl ? { authorUrl } : {}),
       url: postUrl,
       type: 'article',
       jsonLd: [
@@ -189,6 +218,9 @@ async function buildMeta(url: URL): Promise<Meta | null> {
       title: `${display} (@${String(p.username)}) — ${SITE}`,
       description: clip(p.banner) || `${display} on ${SITE}.`,
       image: avatar,
+      imageAlt: `${display}'s avatar`,
+      ...imageDims(avatar, defaultImage),
+      profileUsername: String(p.username),
       url: profileUrl,
       type: 'profile',
       jsonLd: [
@@ -213,11 +245,43 @@ async function buildMeta(url: URL): Promise<Meta | null> {
     }
   }
 
+  const tagMatch = path.match(/^\/t\/([^/]+)\/?$/)
+  if (tagMatch) {
+    const slug = decodeURIComponent(tagMatch[1])
+    const rows = await restGet(
+      `flairs?slug=eq.${encodeURIComponent(slug)}&scope=eq.post&select=slug,label&limit=1`,
+    )
+    const flair = rows?.[0]
+    if (!flair) return null
+    const label = String(flair.label || slug)
+    const tagUrl = `${origin}/t/${encodeURIComponent(String(flair.slug))}`
+    return {
+      title: `${label} — ${SITE}`,
+      description: `${label} posts on ${SITE}.`,
+      image: defaultImage,
+      url: tagUrl,
+      type: 'website',
+      jsonLd: [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          '@id': tagUrl,
+          url: tagUrl,
+          name: `${label} — ${SITE}`,
+          isPartOf: websiteNode(origin),
+        },
+        breadcrumbNode(origin, { name: label, url: tagUrl }),
+      ],
+    }
+  }
+
   if (path === '/') {
     return {
       title: `${COMMUNITY.name} — Wakanda-first fan community`,
       description: clip(COMMUNITY.blurb),
       image: defaultImage,
+      imageAlt: `${SITE} — Wakanda-first fan community`,
+      ...imageDims(defaultImage, defaultImage),
       url: `${origin}/`,
       type: 'website',
       jsonLd: [
@@ -258,6 +322,27 @@ function renderHtml(m: Meta): string {
   const desc = escapeAttr(m.description)
   const image = escapeAttr(m.image)
   const url = escapeAttr(m.url)
+  const imageAlt = escapeAttr(m.imageAlt ?? m.title)
+  // Additive tags that sharpen the unfurl card; each omitted when we lack the
+  // data so we never emit an empty or guessed value.
+  const extra: string[] = [
+    `<meta property="og:locale" content="en_US" />`,
+    `<meta property="og:image:alt" content="${imageAlt}" />`,
+    `<meta name="twitter:image:alt" content="${imageAlt}" />`,
+  ]
+  if (m.imageWidth && m.imageHeight) {
+    extra.push(`<meta property="og:image:width" content="${m.imageWidth}" />`)
+    extra.push(`<meta property="og:image:height" content="${m.imageHeight}" />`)
+  }
+  if (m.type === 'article' && m.publishedTime) {
+    extra.push(`<meta property="article:published_time" content="${escapeAttr(m.publishedTime)}" />`)
+  }
+  if (m.type === 'article' && m.authorUrl) {
+    extra.push(`<meta property="article:author" content="${escapeAttr(m.authorUrl)}" />`)
+  }
+  if (m.type === 'profile' && m.profileUsername) {
+    extra.push(`<meta property="profile:username" content="${escapeAttr(m.profileUsername)}" />`)
+  }
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -275,6 +360,7 @@ function renderHtml(m: Meta): string {
 <meta name="twitter:title" content="${title}" />
 <meta name="twitter:description" content="${desc}" />
 <meta name="twitter:image" content="${image}" />
+${extra.join('\n')}
 ${jsonLdScripts(m.jsonLd)}
 </head>
 <body></body>
