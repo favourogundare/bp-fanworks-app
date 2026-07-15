@@ -30,6 +30,7 @@ export interface UiPost {
   pollOptions: string[] // poll choice labels (empty unless type === 'poll')
   warnings: string[] // content warnings; body/media gate behind them when non-empty
   pinned: boolean
+  scheduledAt: string | null // ISO when scheduled to publish; hidden from others until due
   locked: boolean // comments locked by a mod; DB policy blocks non-mod comments
   profilePinned: boolean // pinned to the author's profile (distinct from mod community pin)
   archived: boolean // author-archived: hidden from feeds/tags/search, direct link still works

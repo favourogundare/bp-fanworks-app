@@ -960,6 +960,11 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
         <PostTypeBadge type={post.type} t={t} />
         {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
+        {post.scheduledAt && new Date(post.scheduledAt) > new Date() && (
+          <span title={new Date(post.scheduledAt).toLocaleString()} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: t.panel2, color: t.accent, fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999 }}>
+            Scheduled · {new Date(post.scheduledAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+          </span>
+        )}
         {post.archived && (
           <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.muted, fontSize: 11, fontWeight: 700, border: `1px solid ${t.border}`, borderRadius: 999, padding: "1px 8px" }}>
             <Archive size={11} /> Archived
@@ -1372,6 +1377,7 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
   const [pollOpts, setPollOpts] = useState(["", "", "", ""]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [customWarning, setCustomWarning] = useState("");
+  const [scheduledAt, setScheduledAt] = useState(""); // datetime-local value; empty = post now
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -1414,7 +1420,7 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
     try {
       let media: string[] = [];
       if (files.length) media = await uploadMedia(files);
-      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined, contentWarnings: warnings, circleId: circleId || null });
+      await createPost({ type: sel, title: title.trim(), body: body.trim(), flairSlugs: flairs, media, pollOptions: sel === "poll" ? cleanPoll : undefined, contentWarnings: warnings, scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null, circleId: circleId || null });
       onCreated?.();
       onClose();
     } catch (e: any) {
@@ -1487,6 +1493,12 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
         )}
         <FmtToolbar taRef={bodyRef} value={body} onChange={setBody} t={t} />
         <textarea ref={bodyRef} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Body text" rows={4} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, color: t.muted, fontSize: 12, fontWeight: 700 }}>
+          <span>Schedule for later (optional):</span>
+          <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)}
+            style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "5px 8px", fontSize: 12 }} />
+          {scheduledAt && <button type="button" onClick={() => setScheduledAt("")} style={{ background: "none", border: "none", color: t.link, cursor: "pointer", fontSize: 12 }}>clear</button>}
+        </div>
         {error && <div style={{ color: "#e0726b", fontSize: 13, marginTop: 8 }}>{error}</div>}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
           <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
