@@ -4,7 +4,7 @@ import {
   Share2, Search, ChevronDown, ChevronUp, ChevronRight, Pin, Shield, BookOpen, TriangleAlert,
   Globe, ArrowLeft, Send, X, Image as ImageIcon, Link2, BarChart3, Video,
   FileText, HelpCircle, Megaphone, Lightbulb, MessageSquare, UserPlus, Archive,
-  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check, Trash2, Users, History, Lock, LockOpen,
+  UserMinus, VolumeX, Flag, Gift, Star, Eye, EyeOff, Repeat2, LogOut, Sun, Moon, Pencil, ExternalLink, Bookmark, Check, Trash2, Users, History, Lock, LockOpen, BadgeCheck,
 } from "lucide-react";
 import { Routes, Route, Navigate, Link, Outlet, useNavigate, useLocation, useParams, useOutletContext, useSearchParams } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
@@ -22,7 +22,7 @@ import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
 import type { UiMessage, UiConversation } from "./lib/chat";
-import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned, modSetCommentDistinguished, modSetCommentSticky, fetchSavedResponses, createSavedResponse, deleteSavedResponse, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
+import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetAo3Verified, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned, modSetCommentDistinguished, modSetCommentSticky, fetchSavedResponses, createSavedResponse, deleteSavedResponse, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
 import type { UiModAction, UiReport, ReportTargetPreview, UiSavedResponse } from "./lib/mod";
 import { fetchModmailThreads, fetchModmailMessages, createModmailThread, sendModmailMessage, setModmailStatus } from "./lib/modmail";
 import type { UiModmailThread, UiModmailMessage } from "./lib/modmail";
@@ -2357,6 +2357,13 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
             </select>
             {!isMe && !profile.banned && <button onClick={() => setModConfirm(profile.isMod ? "demote" : "promote")} style={modBtn(t)}>{profile.isMod ? "Remove mod" : "Make mod"}</button>}
             {!isMe && !profile.isMod && <button onClick={() => setModConfirm(profile.banned ? "unban" : "ban")} style={{ ...modBtn(t), color: profile.banned ? undefined : "#e0726b" }}>{profile.banned ? "Unban" : "Ban"}</button>}
+            <button
+              onClick={() => { modSetAo3Verified(profile.id, !profile.ao3Verified).then(() => onProfileChanged?.()).catch((err) => console.error("set ao3 verified failed", err)); }}
+              disabled={!profile.ao3 && !profile.ao3Verified}
+              title={!profile.ao3 && !profile.ao3Verified ? "This member hasn't linked an AO3 account yet." : "Confirm the linked AO3 account belongs to this member."}
+              style={{ ...modBtn(t), ...(!profile.ao3 && !profile.ao3Verified ? { color: t.muted, cursor: "not-allowed" } : {}) }}>
+              <BadgeCheck size={12} /> {profile.ao3Verified ? "AO3 verified — remove" : "Mark AO3 verified"}
+            </button>
           </div>
         )}
         {modConfirm && (
@@ -2409,6 +2416,12 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
           {[["AO3", profile.ao3], ["Ko-fi", profile.kofi]].filter(([, u]) => u && /^https:\/\//i.test(u)).map(([name, u]) => (
             <a key={name} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, color: t.accent, fontSize: 13, fontWeight: 700, textDecoration: "none", marginBottom: 8 }}>
               <ExternalLink size={13} /> {name}
+              {name === "AO3" && profile.ao3Verified && (
+                <span title="A moderator confirmed this AO3 account belongs to this member."
+                  style={{ display: "inline-flex", alignItems: "center", gap: 3, color: t.heading, background: t.panel2, borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700 }}>
+                  <BadgeCheck size={12} /> verified by mods
+                </span>
+              )}
             </a>
           ))}
           {(profile.ao3Works || []).filter((u: string) => /^https:\/\//i.test(u)).length > 0 && (
@@ -2965,6 +2978,7 @@ function ModLogRoute() {
     promote_mod: "promoted a member to mod", demote_mod: "removed a mod", ban_member: "banned a member", unban_member: "unbanned a member",
     distinguish_comment: "distinguished a comment", undistinguish_comment: "undistinguished a comment",
     sticky_comment: "stickied a comment", unsticky_comment: "unstickied a comment",
+    verify_ao3: "verified an AO3 account", unverify_ao3: "removed an AO3 verification",
   };
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
