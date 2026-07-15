@@ -240,7 +240,8 @@ export async function fetchMyPostInsights(postId: string): Promise<PostInsights 
 // (many-to-many), so a bare profiles embed is ambiguous (PGRST201).
 const POST_FIELDS =
   'id, title, body, type, pinned, profile_pinned_at, archived_at, vote_score, view_count, created_at, media, links, poll_options, content_warnings, ' +
-  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count), circle:circles(slug, name)'
+  'author:profiles!posts_author_id_fkey(username), post_flairs(flairs(slug)), comments(count), circle:circles(slug, name), ' +
+  'post_coauthors(profile:profiles(username))'
 
 function mapPost(row: Row): UiPost {
   return {
@@ -266,6 +267,7 @@ function mapPost(row: Row): UiPost {
     commentCount: row.comments?.[0]?.count ?? 0,
     comments: [],
     circle: row.circle ? { slug: row.circle.slug, name: row.circle.name } : null,
+    coauthors: (row.post_coauthors ?? []).map((c: Row) => c.profile?.username).filter(Boolean) as string[],
   }
 }
 
@@ -1212,7 +1214,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
   if (error) throw error
   if (!p) return null
 
-  const [postsRes, followersRes, contribRes] = await Promise.all([
+  const [postsRes, coauthoredRes, followersRes, contribRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_FIELDS)
@@ -1221,6 +1223,13 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .is('archived_at', null)
       .order('profile_pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }),
+    // Joint works: profile-shelf posts this member is credited on as a co-author.
+    supabase
+      .from('post_coauthors')
+      .select(`post:posts!inner(${POST_FIELDS})`)
+      .eq('profile_id', p.id)
+      .eq('post.surface', 'profile')
+      .is('post.archived_at', null),
     supabase
       .from('relationships')
       .select('*', { count: 'exact', head: true })
@@ -1231,6 +1240,13 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .select('*', { count: 'exact', head: true })
       .eq('author_id', p.id),
   ])
+
+  // Merge authored + co-authored, dedup by id, keep pinned-first then newest.
+  const authored = (postsRes.data ?? []).map(mapPost)
+  const coauthored = (coauthoredRes.data ?? []).map((r: Row) => r.post).filter(Boolean).map(mapPost)
+  const seen = new Set(authored.map((p2) => p2.id))
+  const allPosts = [...authored, ...coauthored.filter((p2) => !seen.has(p2.id))]
+    .sort((a, b) => (Number(b.profilePinned) - Number(a.profilePinned)))
 
   return {
     ...mapProfileCore(p),
@@ -1252,8 +1268,31 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     gold: p.gold_earned ?? 0,
     achievements: 'No achievements yet',
     unlocked: 0,
-    posts: (postsRes.data ?? []).map(mapPost),
+    posts: allPosts,
   }
+}
+
+// ----- post co-authors (MILESTONES §4) -----
+
+/** Add a co-author to a post by username (post author only, enforced by RLS). */
+export async function addCoauthor(postId: string, username: string): Promise<void> {
+  const { data: prof, error: pErr } = await supabase
+    .from('profiles').select('id').eq('username', username).maybeSingle()
+  if (pErr) throw pErr
+  if (!prof) throw new Error(`No member named ${username}`)
+  const { error } = await supabase.from('post_coauthors').insert({ post_id: postId, profile_id: prof.id })
+  if (error) throw error.code === '23505' ? new Error(`${username} is already a co-author`) : error
+}
+
+/** Remove a co-author by username (post author or the co-author themselves). */
+export async function removeCoauthor(postId: string, username: string): Promise<void> {
+  const { data: prof, error: pErr } = await supabase
+    .from('profiles').select('id').eq('username', username).maybeSingle()
+  if (pErr) throw pErr
+  if (!prof) return
+  const { error } = await supabase.from('post_coauthors')
+    .delete().eq('post_id', postId).eq('profile_id', prof.id)
+  if (error) throw error
 }
 
 // ----- circles (public sub-communities; MILESTONES §9 Phase 1) -----

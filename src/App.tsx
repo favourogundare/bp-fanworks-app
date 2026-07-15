@@ -11,11 +11,13 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { AVATAR_PARTS, avatarPartOptions, avatarPreviewUri, buildAvatarPng, randomAvatarSeed } from "./lib/avatarBuilder";
+import { fetchLatestTjadaka } from "./lib/tjadaka";
+import type { TjadakaPost } from "./lib/tjadaka";
 import { timeAgo } from "./lib/time";
 import type { HistoryEntry } from "./lib/readingHistory";
 import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage, subscribeToMessages } from "./lib/chat";
@@ -883,7 +885,9 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }} onClick={() => onOpen(post)}>
         <Avatar seed={post.author} size={26} t={t} />
         <Link to={`/user/${post.author}`} onClick={(e) => e.stopPropagation()} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading, textDecoration: "none" }}>{post.author}</Link>
+        {post.coauthors?.length > 0 && <span style={{ fontSize: 12, color: t.muted }}>+ {post.coauthors.length} collaborator{post.coauthors.length > 1 ? "s" : ""}</span>}
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
+        <PostTypeBadge type={post.type} t={t} />
         {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
         {post.archived && (
           <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.muted, fontSize: 11, fontWeight: 700, border: `1px solid ${t.border}`, borderRadius: 999, padding: "1px 8px" }}>
@@ -1076,6 +1080,33 @@ function BookmarkAddRow({ t, onChanged }: any) {
 }
 
 // ----- Community sidebar -----
+// "Latest from T'Jadaka" (MILESTONES §12): newest posts from the source
+// fiction's WordPress blog, linking back out. Renders nothing while loading
+// or when the fetch fails — the sidebar must never break on a remote outage.
+function TjadakaLatest({ t }: any) {
+  const [posts, setPosts] = useState<TjadakaPost[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetchLatestTjadaka().then((p) => { if (alive) setPosts(p); }).catch((e) => console.error("tjadaka fetch failed", e));
+    return () => { alive = false; };
+  }, []);
+  if (posts.length === 0) return null;
+  return (
+    <>
+      <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "16px 0 10px" }}>LATEST FROM T'JADAKA</div>
+      {posts.map((p) => (
+        <a key={p.id} href={p.link} target="_blank" rel="noopener noreferrer"
+          style={{ display: "block", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 8, textDecoration: "none" }}>
+          {p.cover && <img src={p.cover} alt="" loading="lazy" style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 8, marginBottom: 8 }} />}
+          <div style={{ color: t.text, fontSize: 13, fontWeight: 700, lineHeight: 1.35 }}>{p.title}</div>
+          {p.excerpt && <div style={{ color: t.muted, fontSize: 12, lineHeight: 1.45, marginTop: 4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{p.excerpt}</div>}
+          <div style={{ color: t.muted, fontSize: 11, marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>{p.when} · Read on tjadaka.com <ExternalLink size={11} /></div>
+        </a>
+      ))}
+    </>
+  );
+}
+
 function CommunitySidebar({ t, isMod }: any) {
   const navigate = useNavigate();
   const [stats, setStats] = useState<{ members: number; contributions: number } | null>(null);
@@ -1180,6 +1211,7 @@ function CommunitySidebar({ t, isMod }: any) {
         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: t.panel2, borderRadius: 999, padding: "9px 0", color: t.text, fontSize: 13, fontWeight: 700, marginBottom: 8, cursor: "pointer", textDecoration: "none" }}>
         Read the fiction on tjadaka.com <ExternalLink size={13} />
       </a>
+      <TjadakaLatest t={t} />
       {/* Tag index (SEO §11 #6): every tag page linked from the sidebar so none is orphaned. */}
       <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, margin: "16px 0 10px" }}>BROWSE TAGS</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -1208,6 +1240,53 @@ const POST_TYPES = [
   { key: "vent", icon: MessageCircle, label: "Vent / Advice", desc: "Personal posts seeking peer support." },
 ];
 
+// Specialized post templates (MILESTONES §4). The five discussion types below
+// were plain text; each now gets a guided title + a markdown body scaffold
+// (dropped into the composer when picked, replaceable until the author types)
+// and a short badge shown on the rendered post. Scaffolds use only the markdown
+// renderRichText already understands (**bold**, ## heading, - list).
+const TEMPLATE_TYPES: Record<string, { badge: string; titlePlaceholder: string; hint: string; scaffold: string }> = {
+  ask: {
+    badge: "Ask",
+    titlePlaceholder: "What's your question?",
+    hint: "A clear question up front gets better answers.",
+    scaffold: "**What I'm asking:**\n\n**Context — what I've already tried or found:**\n",
+  },
+  ama: {
+    badge: "AMA",
+    titlePlaceholder: "Who are you, and what should people ask?",
+    hint: "Say who you are and what to ask — then answer in the comments.",
+    scaffold: "**Who I am:**\n\n**What I can answer:**\n\n**When I'll be answering:**\n",
+  },
+  til: {
+    badge: "TIL",
+    titlePlaceholder: "TIL that…",
+    hint: "Share the fact and where you found it.",
+    scaffold: "**TIL:**\n\n**Where I learned it:**\n",
+  },
+  debate: {
+    badge: "Debate",
+    titlePlaceholder: "Your topic or hot take",
+    hint: "State your position and invite counter-arguments.",
+    scaffold: "**My take:**\n\n**Why I think so:**\n\n**Change my mind:**\n",
+  },
+  vent: {
+    badge: "Vent",
+    titlePlaceholder: "What's on your mind?",
+    hint: "Say what's going on and whether you want advice or just support.",
+    scaffold: "**What's going on:**\n\n**What I'm looking for:** just venting / advice welcome\n",
+  },
+};
+
+// Small labelled pill for a templated post type (null for plain types).
+function PostTypeBadge({ type, t }: any) {
+  const tpl = TEMPLATE_TYPES[type];
+  if (!tpl) return null;
+  return (
+    <span style={{ color: t.accent, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, border: `1px solid ${t.accent}`, borderRadius: 999, padding: "1px 8px" }}>{tpl.badge}</span>
+  );
+}
+
 function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
   const [sel, setSel] = useState("text");
   const [title, setTitle] = useState("");
@@ -1233,6 +1312,17 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
   };
   const isMedia = sel === "image" || sel === "video";
   const setPollOpt = (i: number, v: string) => setPollOpts((p) => p.map((x, j) => (j === i ? v : x)));
+
+  // Drop the picked type's template scaffold into the body, but only while the
+  // body is still pristine (empty or the previously-applied scaffold) so we
+  // never clobber text the author has started writing.
+  const scaffoldRef = useRef("");
+  useEffect(() => {
+    const prevScaffold = scaffoldRef.current; // capture now — the updater below runs later
+    const scaffold = TEMPLATE_TYPES[sel]?.scaffold ?? "";
+    scaffoldRef.current = scaffold;
+    setBody((prev) => (prev === prevScaffold ? scaffold : prev));
+  }, [sel]);
 
   // Circles Phase 1: every circle is public and open to posting, so the
   // "Post to" picker lists them all (joined ones first).
@@ -1285,7 +1375,8 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
             );
           })}
         </div>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" }} />
+        {TEMPLATE_TYPES[sel] && <div style={{ color: t.muted, fontSize: 12, marginBottom: 8 }}>{TEMPLATE_TYPES[sel].hint}</div>}
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={TEMPLATE_TYPES[sel]?.titlePlaceholder ?? "Title"} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" }} />
         <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Flairs (tap to toggle)</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {Object.keys(POST_FLAIRS).map((k) => {
@@ -1632,6 +1723,60 @@ function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor }: any
   );
 }
 
+// Manage a post's co-authors (post author only — MILESTONES §4).
+function CoauthorsModal({ t, post, onClose, onChanged }: any) {
+  const [list, setList] = useState<string[]>(post.coauthors ?? []);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const add = async () => {
+    const u = name.trim().replace(/^@/, "");
+    if (!u) return;
+    if (u === post.author) { setError("The author is already credited."); return; }
+    if (list.includes(u)) { setError(`${u} is already a co-author.`); return; }
+    setBusy(true); setError(null);
+    try {
+      await addCoauthor(post.id, u);
+      setList((prev) => [...prev, u]); setName(""); onChanged?.();
+    } catch (e: any) { setError((e && e.message) || "Couldn't add that member."); }
+    finally { setBusy(false); }
+  };
+  const remove = async (u: string) => {
+    setBusy(true); setError(null);
+    try { await removeCoauthor(post.id, u); setList((prev) => prev.filter((x) => x !== u)); onChanged?.(); }
+    catch (e: any) { setError((e && e.message) || "Couldn't remove that member."); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 420, maxWidth: "100%", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>Collaborators</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div style={{ color: t.muted, fontSize: 12, marginBottom: 14 }}>Credit other members as co-authors. This joint work shows on each of their profiles; any co-author can remove themselves.</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="username"
+            style={{ flex: 1, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", color: t.text, boxSizing: "border-box" }} />
+          <button onClick={add} disabled={busy || !name.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 800, opacity: busy || !name.trim() ? 0.6 : 1 }}>Add</button>
+        </div>
+        {error && <div style={{ color: t.error, fontSize: 13, marginBottom: 10 }}>{error}</div>}
+        {list.length === 0 ? (
+          <div style={{ color: t.muted, fontSize: 13, fontStyle: "italic" }}>No collaborators yet.</div>
+        ) : list.map((u) => (
+          <div key={u} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: `1px solid ${t.border}` }}>
+            <Avatar seed={u} size={26} t={t} />
+            <span style={{ color: t.text, fontSize: 14, fontWeight: 700, flex: 1 }}>{u}</span>
+            <button onClick={() => remove(u)} disabled={busy} style={{ background: "none", border: "none", color: t.error, cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Remove</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved, myUsername, onCircle }: any) {
   const bp = useBreakpoint();
   const [saved, toggleSave] = useSaved("post", post.id);
@@ -1642,6 +1787,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [reading, setReading] = useState(false); // distraction-reduced view, in-memory only
+  const [managing, setManaging] = useState(false);
   const mine = !!myUsername && post.author === myUsername;
   const hoverHandlers = useUsernameHoverCard(post.author);
 
@@ -1671,6 +1817,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             <span style={{ color: t.heading, fontWeight: 700, fontSize: 13 }}>{community.name}</span>
           )}
           <span style={{ color: t.muted, fontSize: 12 }}>· {post.when}</span>
+          <PostTypeBadge type={post.type} t={t} />
           {mine && (
             <div style={{ marginLeft: "auto", position: "relative" }}>
               <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={18} /></button>
@@ -1687,8 +1834,14 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             </div>
           )}
         </div>
-        <div style={{ fontSize: 12, marginBottom: 6 }}>
+        <div style={{ fontSize: 12, marginBottom: 6, display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
           <Link to={`/user/${post.author}`} {...hoverHandlers} style={{ color: t.muted, cursor: "pointer", textDecoration: "none" }}>{post.author}</Link>
+          {post.coauthors?.length > 0 && (
+            <span style={{ color: t.muted }}>with {post.coauthors.map((u: string, i: number) => (
+              <React.Fragment key={u}>{i > 0 ? ", " : " "}<Link to={`/user/${u}`} style={{ color: t.heading, textDecoration: "none", fontWeight: 700 }}>{u}</Link></React.Fragment>
+            ))}</span>
+          )}
+          {mine && <button onClick={() => setManaging(true)} style={{ background: "none", border: "none", color: t.link, cursor: "pointer", fontSize: 12, padding: 0, marginLeft: 4, display: "inline-flex", alignItems: "center", gap: 3 }}><UserPlus size={12} /> Collaborators</button>}
         </div>
         {post.archived && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", marginBottom: 12, color: t.muted, fontSize: 13 }}>
@@ -1733,6 +1886,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
         <CommentComposer t={t} postId={post.id} onAdded={onCommentAdded} placeholder="Join the conversation…" />
         <CommentList comments={post.comments ?? []} t={t} postId={post.id} onAdded={onCommentAdded} myUsername={myUsername} onAuthor={onAuthor} />
       </div>
+      {managing && <CoauthorsModal t={t} post={post} onClose={() => setManaging(false)} onChanged={onCommentAdded} />}
       {!reading && <div><CommunitySidebar t={t} isMod={isMod} /></div>}
       {confirming && <ConfirmDialog t={t} title="Delete post?" message="This can't be undone." onConfirm={remove} onClose={() => setConfirming(false)} busy={busy} />}
     </div>
