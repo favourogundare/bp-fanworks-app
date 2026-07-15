@@ -145,6 +145,7 @@ export interface UiCommissionRequest {
 }
 
 export interface UiProfile extends UiUserPreview {
+  banned: boolean // banned from the community (mods see a chip; DB blocks their posts/comments)
   flairSlug: string | null // own member-flair slug, for the self-flair picker
   banner: string
   avatarUrl: string | null
