@@ -11,9 +11,9 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, fetchCircleMembers, circleAddMember, circleSetRole, circleRemoveMember, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
+import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { AVATAR_PARTS, avatarPartOptions, avatarPreviewUri, buildAvatarPng, randomAvatarSeed } from "./lib/avatarBuilder";
 import { fetchLatestTjadaka } from "./lib/tjadaka";
@@ -2957,6 +2957,7 @@ function CreateCircleModal({ t, onClose, onCreated }: any) {
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
   const [description, setDescription] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const finalSlug = slugTouched ? slug : slugifyCircle(name);
@@ -2966,7 +2967,7 @@ function CreateCircleModal({ t, onClose, onCreated }: any) {
     if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(finalSlug)) { setError("Slug must be 1-40 chars: lowercase letters, numbers, dashes."); return; }
     setBusy(true); setError(null);
     try {
-      await createCircle({ slug: finalSlug, name: name.trim(), description: description.trim() });
+      await createCircle({ slug: finalSlug, name: name.trim(), description: description.trim(), visibility });
       onCreated?.(finalSlug);
       onClose();
     } catch (e: any) {
@@ -2988,6 +2989,17 @@ function CreateCircleModal({ t, onClose, onCreated }: any) {
         <div style={{ color: t.muted, fontSize: 12, marginTop: -4, marginBottom: 10 }}>Lives at c/{finalSlug || "…"}</div>
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this circle about? (optional)" rows={3} maxLength={500}
           style={{ ...fieldStyle, resize: "vertical", fontFamily: "inherit", fontSize: 14 }} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+          {(["public", "private"] as const).map((v) => (
+            <button key={v} type="button" onClick={() => setVisibility(v)}
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: visibility === v ? t.accent : "transparent", color: visibility === v ? t.accentText : t.text, border: `1px solid ${visibility === v ? t.accent : t.border}`, borderRadius: 10, padding: "8px 10px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+              {v === "public" ? <Globe size={14} /> : <Lock size={14} />} {v === "public" ? "Public" : "Private"}
+            </button>
+          ))}
+        </div>
+        <div style={{ color: t.muted, fontSize: 12, marginBottom: 10 }}>
+          {visibility === "public" ? "Anyone can find, join, and post." : "Discoverable by name, but only invited members see and post. You invite members from the circle page."}
+        </div>
         {error && <div style={{ color: t.error, fontSize: 13, marginTop: 4 }}>{error}</div>}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
           <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
@@ -3073,6 +3085,14 @@ function CircleJoinButton({ t, circle, onChanged }: any) {
       .catch((e) => console.error("circle join toggle failed", e))
       .finally(() => setBusy(false));
   };
+  // Private circles can't be self-joined — membership is invite-only.
+  if (circle.visibility === "private" && !circle.joined) {
+    return (
+      <span style={{ ...relBtn(t), cursor: "default", color: t.muted, gap: 6 }} title="Ask a circle mod for an invite">
+        <Lock size={14} /> Invite only
+      </span>
+    );
+  }
   return (
     <button onClick={toggle} disabled={busy} style={relBtn(t, circle.joined)}>
       {circle.joined ? <UserMinus size={15} /> : <UserPlus size={15} />} {circle.joined ? "Joined" : "Join"}
@@ -3114,6 +3134,7 @@ function CirclesRoute() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span onClick={() => navigate(`/c/${ci.slug}`)} style={{ color: t.text, fontSize: 16, fontWeight: 800, cursor: "pointer" }}>{ci.name}</span>
+                {ci.visibility === "private" && <span title="Private circle" style={{ color: t.muted, display: "inline-flex", alignItems: "center" }}><Lock size={13} /></span>}
                 <span style={{ color: t.muted, fontSize: 12 }}>c/{ci.slug}</span>
                 <span style={{ color: t.muted, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Users size={12} /> {ci.members}</span>
               </div>
@@ -3203,13 +3224,17 @@ function CircleRoute() {
   const [circle, setCircle] = useState<UiCircle | null>(null);
   const [posts, setPosts] = useState<UiPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showManage, setShowManage] = useState(false);
 
   const load = () => {
     setLoading(true);
     fetchCircle(slug as string)
       .then(async (ci) => {
         setCircle(ci);
-        setPosts(ci ? await fetchCircleFeed(ci.id) : []);
+        // Private-circle posts are RLS-gated: non-members simply get an empty
+        // feed, so only fetch when we can actually see it.
+        const canView = ci && (ci.visibility === "public" || ci.joined || c.myIsMod);
+        setPosts(canView ? await fetchCircleFeed(ci!.id) : []);
       })
       .catch((e) => console.error("circle load failed", e))
       .finally(() => setLoading(false));
@@ -3222,14 +3247,119 @@ function CircleRoute() {
 
   if (!loading && !circle) return <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 16px", color: t.muted, fontSize: 14 }}>This circle doesn't exist.</div>;
 
+  const canManage = !!circle && (circle.myRole === "mod" || c.myIsMod);
+  const locked = !!circle && circle.visibility === "private" && !circle.joined && !c.myIsMod;
+
   const action = circle && (
     <div style={{ display: "flex", gap: 8 }}>
+      {canManage && <button onClick={() => setShowManage(true)} style={relBtn(t)}><Shield size={14} /> Manage</button>}
       <CircleJoinButton t={t} circle={circle} onChanged={load} />
-      <button onClick={() => c.openCreate(circle.id, load)} style={{ ...relBtn(t), background: t.accent, color: t.accentText, border: "none" }}><Plus size={14} /> New post</button>
+      {!locked && <button onClick={() => c.openCreate(circle.id, load)} style={{ ...relBtn(t), background: t.accent, color: t.accentText, border: "none" }}><Plus size={14} /> New post</button>}
     </div>
   );
-  return <PostListPage t={t} title={circle?.name ?? "…"} sub={circle ? `c/${circle.slug} · ${circle.members} member${circle.members === 1 ? "" : "s"}${circle.description ? ` — ${circle.description}` : ""}` : null}
-    action={action} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="No posts in this circle yet — start it off." />;
+  const sub = circle
+    ? `c/${circle.slug} · ${circle.visibility === "private" ? "Private · " : ""}${circle.members} member${circle.members === 1 ? "" : "s"}${circle.description ? ` — ${circle.description}` : ""}`
+    : null;
+
+  return (
+    <>
+      {locked ? (
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px 24px" }}>
+          <div style={{ padding: "20px 0 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 8 }}><Lock size={20} /> {circle!.name}</h1>
+              <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>{sub}</div>
+            </div>
+            {action}
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "32px 20px", textAlign: "center", color: t.muted, fontSize: 14 }}>
+            <Lock size={28} style={{ marginBottom: 10, opacity: 0.7 }} />
+            <div style={{ color: t.text, fontWeight: 700, fontSize: 16, marginBottom: 4 }}>This circle is private</div>
+            Only invited members can see its posts. Ask a circle mod for an invite.
+          </div>
+        </div>
+      ) : (
+        <PostListPage t={t} title={circle?.name ?? "…"} sub={sub}
+          action={action} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="No posts in this circle yet — start it off." />
+      )}
+      {showManage && circle && <CircleMembersModal t={t} circle={circle} goUser={c.goUser} onClose={() => setShowManage(false)} onChanged={load} />}
+    </>
+  );
+}
+
+// Per-circle mod tooling (Phase 2): invite members by username, promote/demote
+// between member and mod, and remove members. All actions go through the
+// circle_* RPCs, which enforce circle-mod authority server-side.
+function CircleMembersModal({ t, circle, goUser, onClose, onChanged }: any) {
+  const [members, setMembers] = useState<UiCircleMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [invite, setInvite] = useState("");
+  const [busy, setBusy] = useState<string | null>(null); // profileId or "invite" being acted on
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = () => {
+    setLoading(true);
+    fetchCircleMembers(circle.id).then(setMembers).catch((e) => console.error("circle members load failed", e)).finally(() => setLoading(false));
+  };
+  useEffect(() => { reload(); }, []);
+
+  const run = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key); setError(null);
+    try { await fn(); reload(); onChanged?.(); }
+    catch (e: any) { setError((e && e.message) || "That didn't work."); }
+    finally { setBusy(null); }
+  };
+  const doInvite = () => {
+    const u = invite.trim().replace(/^@/, "");
+    if (!u) return;
+    run("invite", async () => { await circleAddMember(circle.id, u); setInvite(""); });
+  };
+
+  const fieldStyle: React.CSSProperties = { flex: 1, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", color: t.text, boxSizing: "border-box" };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 460, maxWidth: "100%", maxHeight: "85vh", overflow: "auto", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>Manage c/{circle.slug}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+          <input value={invite} onChange={(e) => setInvite(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doInvite()}
+            placeholder="Invite by username" maxLength={40} style={fieldStyle} />
+          <button onClick={doInvite} disabled={busy === "invite" || !invite.trim()} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 10, padding: "0 16px", cursor: "pointer", fontWeight: 800, opacity: busy === "invite" || !invite.trim() ? 0.6 : 1 }}>
+            {busy === "invite" ? "…" : "Invite"}
+          </button>
+        </div>
+        {error && <div style={{ color: t.error, fontSize: 13, marginBottom: 8 }}>{error}</div>}
+        <div style={{ marginTop: 12 }}>
+          {loading ? (
+            <div style={{ color: t.muted, fontSize: 14, padding: "16px 0" }}>Loading members…</div>
+          ) : members.map((m) => (
+            <div key={m.profileId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${t.border}` }}>
+              <span onClick={() => goUser?.(m.username)} style={{ color: t.text, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>{m.displayName}</span>
+              {m.isCreator ? (
+                <span style={{ color: t.accent, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>Creator</span>
+              ) : m.role === "mod" ? (
+                <span style={{ color: t.muted, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>Mod</span>
+              ) : null}
+              {!m.isCreator && (
+                <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                  <button onClick={() => run(m.profileId, () => circleSetRole(circle.id, m.profileId, m.role === "mod" ? "member" : "mod"))}
+                    disabled={busy === m.profileId} style={{ ...relBtn(t), padding: "4px 10px", fontSize: 12 }}>
+                    {m.role === "mod" ? "Demote" : "Make mod"}
+                  </button>
+                  <button onClick={() => run(m.profileId, () => circleRemoveMember(circle.id, m.profileId))}
+                    disabled={busy === m.profileId} style={{ ...relBtn(t), padding: "4px 10px", fontSize: 12, color: t.error }}>
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CommissionRequestCard({ request, t, mine, isMod, onChanged, goUser }: any) {
