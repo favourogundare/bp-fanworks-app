@@ -6,6 +6,11 @@
 const SITE = 'Black Panther Fanworks'
 const DEFAULT_IMAGE = '/bpf-home.png'
 
+// Canonical URLs must always point at the production host: built from
+// window.location.origin they'd emit *.vercel.app (or localhost) canonicals on
+// preview deploys, splitting search-index signals across hosts.
+const CANONICAL_ORIGIN = 'https://blackpantherfanworks.com'
+
 type PageMeta = {
   title: string
   description?: string
@@ -13,6 +18,9 @@ type PageMeta = {
   /** Path or absolute URL; defaults to the current path. */
   url?: string
   type?: 'website' | 'article' | 'profile'
+  /** Paginated views: neighbour page URLs for rel="prev"/"next" links. */
+  prev?: string | null
+  next?: string | null
 }
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
@@ -25,8 +33,14 @@ function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
   el.setAttribute('content', content)
 }
 
-function upsertLink(rel: string, href: string) {
+function upsertLink(rel: string, href: string | null | undefined) {
   let el = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
+  if (!href) {
+    // Remove rather than leave a stale link when a page has no such neighbour
+    // (e.g. navigating from /?page=2 to an unpaginated route).
+    el?.remove()
+    return
+  }
   if (!el) {
     el = document.createElement('link')
     el.setAttribute('rel', rel)
@@ -43,20 +57,22 @@ export function clip(s: string, n = 160): string {
 
 function absolute(u: string): string {
   try {
-    return new URL(u, window.location.origin).toString()
+    return new URL(u, CANONICAL_ORIGIN).toString()
   } catch {
-    return window.location.origin + '/'
+    return CANONICAL_ORIGIN + '/'
   }
 }
 
 /** Set the document title + canonical + OG/Twitter tags for the current route. */
-export function setPageMeta({ title, description, image, url, type = 'website' }: PageMeta) {
+export function setPageMeta({ title, description, image, url, type = 'website', prev, next }: PageMeta) {
   document.title = title
   const canonical = absolute(url ?? window.location.pathname)
   const img = absolute(image ?? DEFAULT_IMAGE)
 
   if (description) upsertMeta('name', 'description', description)
   upsertLink('canonical', canonical)
+  upsertLink('prev', prev ? absolute(prev) : null)
+  upsertLink('next', next ? absolute(next) : null)
 
   upsertMeta('property', 'og:site_name', SITE)
   upsertMeta('property', 'og:title', title)
