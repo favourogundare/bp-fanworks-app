@@ -193,6 +193,17 @@ export async function castVote(targetType: VoteTarget, targetId: string, value: 
   }
 }
 
+// ----- reporting content (mod report queue) -----
+/** File a report on a post or comment. Re-reporting the same target is a no-op. */
+export async function submitReport(targetType: 'post' | 'comment', targetId: string, reason: string): Promise<void> {
+  const me = await getMyProfileId()
+  if (!me) throw new Error('Not signed in')
+  const { error } = await supabase
+    .from('reports')
+    .insert({ reporter_id: me, target_type: targetType, target_id: targetId, reason: reason.slice(0, 500) })
+  if (error && error.code !== '23505') throw error // 23505: already reported this target
+}
+
 // ----- creator post insights (MILESTONES §7 "Post analytics for creators", v1) -----
 
 export type PostInsights = {

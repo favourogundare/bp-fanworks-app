@@ -44,6 +44,78 @@ export async function fetchModLog(limit = 100): Promise<UiModAction[]> {
   }))
 }
 
+/** Mod removal of any comment: soft-delete so child replies survive. */
+export async function modRemoveComment(commentId: string, reason = ''): Promise<void> {
+  const { error } = await supabase.rpc('mod_remove_comment', { p_comment: commentId, p_reason: reason })
+  if (error) throw error
+}
+
+export interface UiReport {
+  id: string
+  targetType: 'post' | 'comment'
+  targetId: string
+  reason: string
+  reporter: string // username
+  status: 'open' | 'resolved' | 'dismissed'
+  when: string // ISO
+}
+
+/** Reports, newest first (RLS: mods only). Two FKs to profiles, so name the reporter FK. */
+export async function fetchReports(view: 'open' | 'closed' = 'open'): Promise<UiReport[]> {
+  let q = supabase
+    .from('reports')
+    .select('id, target_type, target_id, reason, status, created_at, reporter:profiles!reports_reporter_id_fkey(username)')
+    .order('created_at', { ascending: false })
+    .limit(200)
+  q = view === 'open' ? q.eq('status', 'open') : q.neq('status', 'open')
+  const { data, error } = await q
+  if (error) throw error
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    targetType: r.target_type,
+    targetId: r.target_id,
+    reason: r.reason ?? '',
+    reporter: r.reporter?.username ?? 'unknown',
+    status: r.status,
+    when: r.created_at,
+  }))
+}
+
+/** Close a report: 'resolved' (actioned) or 'dismissed' (no action needed). */
+export async function modResolveReport(reportId: string, status: 'resolved' | 'dismissed', note = ''): Promise<void> {
+  const { error } = await supabase.rpc('mod_resolve_report', { p_report: reportId, p_status: status, p_note: note })
+  if (error) throw error
+}
+
+export interface ReportTargetPreview {
+  text: string // post title or comment body excerpt; '' if the target is gone
+  link: string | null // in-app link to view the target; null if gone
+  gone: boolean
+}
+
+/** Batch-load previews for report targets. Key: `${targetType}:${targetId}`. */
+export async function fetchReportTargets(reports: UiReport[]): Promise<Record<string, ReportTargetPreview>> {
+  const postIds = [...new Set(reports.filter((r) => r.targetType === 'post').map((r) => r.targetId))]
+  const commentIds = [...new Set(reports.filter((r) => r.targetType === 'comment').map((r) => r.targetId))]
+  const out: Record<string, ReportTargetPreview> = {}
+  if (postIds.length) {
+    const { data, error } = await supabase.from('posts').select('id, title').in('id', postIds)
+    if (error) throw error
+    for (const p of data ?? []) out[`post:${p.id}`] = { text: p.title, link: `/post/${p.id}`, gone: false }
+  }
+  if (commentIds.length) {
+    const { data, error } = await supabase.from('comments').select('id, body, post_id, deleted_at').in('id', commentIds)
+    if (error) throw error
+    for (const c of data ?? [])
+      out[`comment:${c.id}`] = { text: c.body, link: `/post/${c.post_id}#comment-${c.id}`, gone: !!c.deleted_at }
+  }
+  for (const r of reports) {
+    const k = `${r.targetType}:${r.targetId}`
+    if (!out[k]) out[k] = { text: '', link: null, gone: true } // target already removed
+  }
+  return out
+}
+
 export async function modSetPostFlairs(postId: string, slugs: string[]): Promise<void> {
   const { error } = await supabase.rpc('mod_set_post_flairs', { p_post: postId, p_slugs: slugs })
   if (error) throw error
