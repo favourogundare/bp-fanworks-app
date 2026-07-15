@@ -33,6 +33,7 @@ export interface UiPost {
   commentCount: number
   comments: UiComment[] // populated on the post page; empty in the feed
   circle: { slug: string; name: string } | null // sub-community, or null = General feed
+  coauthors: string[] // credited co-authors' usernames (empty for solo posts)
 }
 
 // Circles Phase 1 (MILESTONES §9): public sub-communities.
