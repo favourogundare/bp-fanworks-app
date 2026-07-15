@@ -24,6 +24,8 @@ import { getOrCreateConversation, fetchConversations, fetchMessages, sendMessage
 import type { UiMessage, UiConversation } from "./lib/chat";
 import { modSetPinned, modRemovePost, modSetPostFlairs, modAssignMemberFlair, modSetLocked, fetchModLog, modRemoveComment, fetchReports, modResolveReport, fetchReportTargets, modSetRole, modSetBanned, modSetCommentDistinguished, modSetCommentSticky, fetchSavedResponses, createSavedResponse, deleteSavedResponse, modUpsertSidebarBookmark, modDeleteSidebarBookmark, modReorderSidebarBookmarks } from "./lib/mod";
 import type { UiModAction, UiReport, ReportTargetPreview, UiSavedResponse } from "./lib/mod";
+import { fetchModmailThreads, fetchModmailMessages, createModmailThread, sendModmailMessage, setModmailStatus } from "./lib/modmail";
+import type { UiModmailThread, UiModmailMessage } from "./lib/modmail";
 import { setPageMeta, clip } from "./lib/seo";
 import { useUsernameHoverCard, UserHoverCardHost } from "./UserHoverCard";
 import { goldPair, neutralPair, PROFILE_THEMES, applyProfileTheme, profileHeaderGradient } from "./lib/palettes";
@@ -1237,8 +1239,11 @@ function CommunitySidebar({ t, isMod }: any) {
         style={{ width: "100%", background: joined ? t.panel2 : t.accent, color: joined ? t.text : t.bg, border: `1px solid ${joined ? t.border : t.accent}`, borderRadius: 999, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: joined === null || joinBusy ? "default" : "pointer", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: joined === null ? 0.6 : 1 }}>
         {joined ? <><UserMinus size={15} /> Leave</> : <><UserPlus size={15} /> Join</>}
       </button>
-      <button style={{ width: "100%", background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      <button style={{ width: "100%", background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         <BookOpen size={15} /> Community Guide
+      </button>
+      <button onClick={() => navigate("/modmail")} style={{ width: "100%", background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <MessageSquare size={15} /> Message the mods
       </button>
       <div style={{ display: "flex", gap: 24, marginBottom: 18 }}>
         <div><div style={{ color: t.text, fontWeight: 800, fontSize: 16 }}>{stats ? stats.members.toLocaleString() : "—"}</div><div style={{ color: t.muted, fontSize: 12 }}>Wakandans</div></div>
@@ -1706,6 +1711,7 @@ function ModBar({ post, t, onChanged, onRemoved }: any) {
       <button onClick={() => navigate("/mod/reports")} style={modBtn(t)}>Reports</button>
       <button onClick={() => navigate("/mod/log")} style={modBtn(t)}>Log</button>
       <button onClick={() => navigate("/mod/responses")} style={modBtn(t)}>Responses</button>
+      <button onClick={() => navigate("/modmail")} style={modBtn(t)}>Mail</button>
       {removing && (
         <div style={{ flexBasis: "100%", display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
           {responses.length > 0 && (
@@ -2785,6 +2791,90 @@ function SearchRoute() {
   }, [q]);
   useEffect(() => { setPageMeta({ title: `Search — ${community.name}`, description: community.blurb, url: "/search", type: "website" }); }, []);
   return <PostListPage t={c.t} title={`Results for “${q}”`} sub={posts.length && !loading ? `${posts.length} post${posts.length === 1 ? "" : "s"}` : null} posts={posts} loading={loading} mutedUsers={c.mutedUsers} onOpen={c.goPost} onAuthor={c.goUser} myUsername={c.myUsername} emptyText="Nothing found. Try different words." />;
+}
+
+// Mod mail (/modmail): member <-> mod-team threads. RLS scopes the thread list
+// (members see their own, mods see all), so one route serves both roles.
+function ModmailRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const isMod = !!c.myIsMod;
+  const [threads, setThreads] = useState<UiModmailThread[]>([]);
+  const [sel, setSel] = useState<string | null>(null);
+  const [msgs, setMsgs] = useState<UiModmailMessage[]>([]);
+  const [reply, setReply] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [composing, setComposing] = useState(false);
+  const loadThreads = () => fetchModmailThreads().then(setThreads).catch((e) => console.error("modmail load failed", e));
+  const openThread = (id: string) => { setSel(id); setComposing(false); fetchModmailMessages(id).then(setMsgs).catch((e) => console.error("modmail msgs failed", e)); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); setPageMeta({ title: `Mod mail — ${community.name}` }); loadThreads(); }, []);
+  const send = () => {
+    if (!reply.trim() || !sel) return;
+    sendModmailMessage(sel, reply, isMod).then(() => { setReply(""); openThread(sel); loadThreads(); }).catch((e) => console.error("send failed", e));
+  };
+  const start = () => {
+    if (!subject.trim() || !body.trim()) return;
+    createModmailThread(subject, body).then((id) => { setSubject(""); setBody(""); setComposing(false); loadThreads(); openThread(id); }).catch((e) => console.error("open thread failed", e));
+  };
+  const toggleStatus = (th: UiModmailThread) => {
+    setModmailStatus(th.id, th.status === "open" ? "closed" : "open").then(loadThreads).catch((e) => console.error("status failed", e));
+  };
+  const active = threads.find((x) => x.id === sel);
+  return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px" }}>
+      <div style={{ padding: "20px 0 8px", display: "flex", alignItems: "center", gap: 10 }}>
+        <MessageSquare size={20} color={t.accent} />
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>{isMod ? "Mod mail" : "Message the mods"}</h1>
+        {!isMod && <button onClick={() => { setComposing(true); setSel(null); }} style={{ ...relBtn(t), marginLeft: "auto", padding: "5px 14px", fontSize: 12, background: t.accent, color: t.accentText }}>New message</button>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 300px) 1fr", gap: 16 }}>
+        <div style={{ borderRight: `1px solid ${t.border}` }}>
+          {threads.length === 0 && <div style={{ color: t.muted, fontSize: 13, padding: "12px 0" }}>No threads yet.</div>}
+          {threads.map((th) => (
+            <div key={th.id} onClick={() => openThread(th.id)} style={{ padding: "10px 8px", cursor: "pointer", borderRadius: 8, background: sel === th.id ? t.panel2 : "transparent" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: t.text, fontSize: 13, fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{th.subject}</span>
+                {th.status === "closed" && <span style={{ color: t.muted, fontSize: 10, fontWeight: 800 }}>CLOSED</span>}
+              </div>
+              <div style={{ color: t.muted, fontSize: 11, marginTop: 2 }}>{isMod ? `${th.memberName} · ` : ""}{th.when} ago</div>
+            </div>
+          ))}
+        </div>
+        <div>
+          {composing ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none" }} />
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="What would you like to tell the mods?" rows={4} style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", resize: "vertical" }} />
+              <button onClick={start} style={{ ...relBtn(t), background: t.accent, color: t.accentText, padding: "6px 16px", fontSize: 13, fontWeight: 800, alignSelf: "flex-start" }}>Send to mods</button>
+            </div>
+          ) : active ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <h2 style={{ color: t.heading, fontSize: 16, fontWeight: 800, margin: 0, flex: 1 }}>{active.subject}</h2>
+                {isMod && <button onClick={() => toggleStatus(active)} style={{ ...relBtn(t), padding: "4px 12px", fontSize: 12 }}>{active.status === "open" ? "Close" : "Reopen"}</button>}
+              </div>
+              {msgs.map((mm) => (
+                <div key={mm.id} style={{ padding: "8px 10px", borderRadius: 8, marginBottom: 6, background: mm.fromMod ? t.panel2 : "transparent", border: `1px solid ${t.border}` }}>
+                  <div style={{ color: mm.fromMod ? t.accent : t.heading, fontSize: 12, fontWeight: 700 }}>{mm.fromMod ? `🛡 ${mm.senderName} (mod)` : mm.senderName} · {mm.when} ago</div>
+                  <div style={{ color: t.text, fontSize: 13, marginTop: 3, whiteSpace: "pre-wrap" }}>{mm.body}</div>
+                </div>
+              ))}
+              {active.status === "open" ? (
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(); }} placeholder="Reply…" style={{ flex: 1, background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none" }} />
+                  <button onClick={send} style={{ ...relBtn(t), background: t.accent, color: t.accentText, padding: "6px 16px", fontSize: 13, fontWeight: 800 }}>Send</button>
+                </div>
+              ) : <div style={{ color: t.muted, fontSize: 12, marginTop: 8 }}>This thread is closed.</div>}
+            </>
+          ) : (
+            <div style={{ color: t.muted, fontSize: 13, padding: "12px 0" }}>Select a thread{!isMod ? ", or start a new message" : ""}.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Mod-only saved-responses manager (/mod/responses): canned replies the team
@@ -4103,6 +4193,7 @@ export default function AppRoutes() {
         <Route path="inbox" element={<InboxRoute />} />
         <Route path="mod/log" element={<ModLogRoute />} />
         <Route path="mod/responses" element={<ModResponsesRoute />} />
+        <Route path="modmail" element={<ModmailRoute />} />
         <Route path="mod/reports" element={<ModReportsRoute />} />
         <Route path="wiki" element={<WikiIndexRoute />} />
         <Route path="wiki/:slug" element={<WikiPageRoute />} />
