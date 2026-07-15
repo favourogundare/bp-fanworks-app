@@ -15,6 +15,7 @@ import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembersh
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
+import { AVATAR_PARTS, avatarPartOptions, avatarPreviewUri, buildAvatarPng, randomAvatarSeed } from "./lib/avatarBuilder";
 import { fetchLatestTjadaka } from "./lib/tjadaka";
 import type { TjadakaPost } from "./lib/tjadaka";
 import { timeAgo } from "./lib/time";
@@ -1892,6 +1893,56 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
   );
 }
 
+// ----- Avatar builder (MILESTONES §7: DiceBear avataaars, rendered locally) -----
+const AVATAR_PART_LABELS: Record<string, string> = {
+  top: "Hair / headwear", skinColor: "Skin tone", hairColor: "Hair color",
+  clothing: "Clothing", eyes: "Eyes", mouth: "Mouth",
+};
+
+function AvatarBuilderModal({ t, onClose, onBuilt }: any) {
+  const [seed, setSeed] = useState(randomAvatarSeed());
+  const [parts, setParts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cfg = { seed, parts };
+
+  const use = async () => {
+    setBusy(true); setError(null);
+    try { onBuilt(await buildAvatarPng(cfg)); onClose(); }
+    catch (e: any) { setError((e && e.message) || "Couldn't build the avatar."); setBusy(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: 420, maxWidth: "100%", maxHeight: "85vh", overflow: "auto", padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <h3 style={{ color: t.text, margin: 0, fontSize: 18, fontWeight: 800 }}>Build an avatar</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: t.muted, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+          <img src={avatarPreviewUri(cfg)} alt="Avatar preview" width={96} height={96} style={{ borderRadius: "50%", background: t.panel2, border: `1px solid ${t.border}` }} />
+          <button onClick={() => setSeed(randomAvatarSeed())} style={relBtn(t)}><Repeat2 size={14} /> Randomize</button>
+        </div>
+        {AVATAR_PARTS.map((part) => (
+          <div key={part} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <label style={{ color: t.muted, fontSize: 12, fontWeight: 700, width: 110, flexShrink: 0 }}>{AVATAR_PART_LABELS[part] ?? part}</label>
+            <select value={parts[part] ?? ""} onChange={(e) => setParts((p) => ({ ...p, [part]: e.target.value }))}
+              style={{ flex: 1, background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 13 }}>
+              <option value="">Surprise me</option>
+              {avatarPartOptions(part).map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        ))}
+        {error && <div style={{ color: t.error, fontSize: 13, marginTop: 6 }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+          <button onClick={onClose} style={{ background: "transparent", color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "8px 18px", cursor: "pointer", fontWeight: 700 }}>Cancel</button>
+          <button onClick={use} disabled={busy} style={{ background: t.accent, color: t.accentText, border: "none", borderRadius: 999, padding: "8px 22px", cursor: "pointer", fontWeight: 800, opacity: busy ? 0.6 : 1 }}>{busy ? "Rendering…" : "Use avatar"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ----- Profile edit panel (own profile: identity, links, content prefs, muted members) -----
 function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any) {
   const [username, setUsername] = useState(profile.username);
@@ -1913,6 +1964,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const [mutedTagsEdit, setMutedTagsEdit] = useState<string[]>(profile.mutedTags || []);
   const toggleMutedTag = (k: string) => setMutedTagsEdit((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
   const [mutes, setMutes] = useState<{ id: string; username: string; type: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1978,7 +2030,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <label style={label}>BIO</label>
       <textarea style={{ ...field, resize: "vertical", minHeight: 56 }} value={banner} onChange={(e) => setBanner(e.target.value)} />
       <label style={label}>AVATAR</label>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Avatar seed={profile.username} url={avatarFile ? URL.createObjectURL(avatarFile) : profile.avatarUrl} size={44} t={t} />
         <input type="file" accept="image/*" onChange={(e) => {
           const f = e.target.files?.[0] ?? null;
@@ -1987,7 +2039,9 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
           setErr("");
           setAvatarFile(f);
         }} style={{ color: t.muted, fontSize: 13 }} />
+        <button type="button" onClick={() => setBuilderOpen(true)} style={{ ...relBtn(t), fontSize: 12 }}>Build one</button>
       </div>
+      {builderOpen && <AvatarBuilderModal t={t} onClose={() => setBuilderOpen(false)} onBuilt={(f: File) => { setErr(""); setAvatarFile(f); }} />}
       <label style={label}>AO3 LINK</label>
       <input style={field} placeholder="https://archiveofourown.org/users/…" value={ao3} onChange={(e) => setAo3(e.target.value)} />
       <label style={label}>AO3 FEATURED WORKS</label>
