@@ -883,6 +883,7 @@ function PostCard({ post, t, onOpen, onAuthor, muted, showMeta, myUsername, onCh
         <Avatar seed={post.author} size={26} t={t} />
         <Link to={`/user/${post.author}`} onClick={(e) => e.stopPropagation()} {...hoverHandlers} style={{ fontSize: 13, fontWeight: 700, color: t.heading, textDecoration: "none" }}>{post.author}</Link>
         <span style={{ fontSize: 12, color: t.muted }}>· {post.when}</span>
+        <PostTypeBadge type={post.type} t={t} />
         {(post.pinned || post.profilePinned) && <Pin size={13} color={t.accent} />}
         {post.archived && (
           <span style={{ display: "flex", alignItems: "center", gap: 4, color: t.muted, fontSize: 11, fontWeight: 700, border: `1px solid ${t.border}`, borderRadius: 999, padding: "1px 8px" }}>
@@ -1207,6 +1208,53 @@ const POST_TYPES = [
   { key: "vent", icon: MessageCircle, label: "Vent / Advice", desc: "Personal posts seeking peer support." },
 ];
 
+// Specialized post templates (MILESTONES §4). The five discussion types below
+// were plain text; each now gets a guided title + a markdown body scaffold
+// (dropped into the composer when picked, replaceable until the author types)
+// and a short badge shown on the rendered post. Scaffolds use only the markdown
+// renderRichText already understands (**bold**, ## heading, - list).
+const TEMPLATE_TYPES: Record<string, { badge: string; titlePlaceholder: string; hint: string; scaffold: string }> = {
+  ask: {
+    badge: "Ask",
+    titlePlaceholder: "What's your question?",
+    hint: "A clear question up front gets better answers.",
+    scaffold: "**What I'm asking:**\n\n**Context — what I've already tried or found:**\n",
+  },
+  ama: {
+    badge: "AMA",
+    titlePlaceholder: "Who are you, and what should people ask?",
+    hint: "Say who you are and what to ask — then answer in the comments.",
+    scaffold: "**Who I am:**\n\n**What I can answer:**\n\n**When I'll be answering:**\n",
+  },
+  til: {
+    badge: "TIL",
+    titlePlaceholder: "TIL that…",
+    hint: "Share the fact and where you found it.",
+    scaffold: "**TIL:**\n\n**Where I learned it:**\n",
+  },
+  debate: {
+    badge: "Debate",
+    titlePlaceholder: "Your topic or hot take",
+    hint: "State your position and invite counter-arguments.",
+    scaffold: "**My take:**\n\n**Why I think so:**\n\n**Change my mind:**\n",
+  },
+  vent: {
+    badge: "Vent",
+    titlePlaceholder: "What's on your mind?",
+    hint: "Say what's going on and whether you want advice or just support.",
+    scaffold: "**What's going on:**\n\n**What I'm looking for:** just venting / advice welcome\n",
+  },
+};
+
+// Small labelled pill for a templated post type (null for plain types).
+function PostTypeBadge({ type, t }: any) {
+  const tpl = TEMPLATE_TYPES[type];
+  if (!tpl) return null;
+  return (
+    <span style={{ color: t.accent, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, border: `1px solid ${t.accent}`, borderRadius: 999, padding: "1px 8px" }}>{tpl.badge}</span>
+  );
+}
+
 function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
   const [sel, setSel] = useState("text");
   const [title, setTitle] = useState("");
@@ -1232,6 +1280,17 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
   };
   const isMedia = sel === "image" || sel === "video";
   const setPollOpt = (i: number, v: string) => setPollOpts((p) => p.map((x, j) => (j === i ? v : x)));
+
+  // Drop the picked type's template scaffold into the body, but only while the
+  // body is still pristine (empty or the previously-applied scaffold) so we
+  // never clobber text the author has started writing.
+  const scaffoldRef = useRef("");
+  useEffect(() => {
+    const prevScaffold = scaffoldRef.current; // capture now — the updater below runs later
+    const scaffold = TEMPLATE_TYPES[sel]?.scaffold ?? "";
+    scaffoldRef.current = scaffold;
+    setBody((prev) => (prev === prevScaffold ? scaffold : prev));
+  }, [sel]);
 
   // Circles Phase 1: every circle is public and open to posting, so the
   // "Post to" picker lists them all (joined ones first).
@@ -1284,7 +1343,8 @@ function CreatePostModal({ t, onClose, onCreated, initialCircleId }: any) {
             );
           })}
         </div>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" }} />
+        {TEMPLATE_TYPES[sel] && <div style={{ color: t.muted, fontSize: 12, marginBottom: 8 }}>{TEMPLATE_TYPES[sel].hint}</div>}
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={TEMPLATE_TYPES[sel]?.titlePlaceholder ?? "Title"} style={{ width: "100%", background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", color: t.text, marginBottom: 10, boxSizing: "border-box" }} />
         <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Flairs (tap to toggle)</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {Object.keys(POST_FLAIRS).map((k) => {
@@ -1670,6 +1730,7 @@ function PostPage({ post, t, onBack, onAuthor, isMod, onCommentAdded, onRemoved,
             <span style={{ color: t.heading, fontWeight: 700, fontSize: 13 }}>{community.name}</span>
           )}
           <span style={{ color: t.muted, fontSize: 12 }}>· {post.when}</span>
+          <PostTypeBadge type={post.type} t={t} />
           {mine && (
             <div style={{ marginLeft: "auto", position: "relative" }}>
               <button onClick={() => setMenuOpen(!menuOpen)} aria-label="Post options" style={{ background: "none", border: "none", color: t.muted, cursor: "pointer", display: "flex", padding: 0 }}><MoreHorizontal size={18} /></button>
