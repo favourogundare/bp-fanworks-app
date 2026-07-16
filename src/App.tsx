@@ -2268,12 +2268,13 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
   const [editing, setEditing] = useState(false);
   const [modConfirm, setModConfirm] = useState<null | "promote" | "demote" | "ban" | "unban">(null);
   const [modBusy, setModBusy] = useState(false);
+  const [ao3Err, setAo3Err] = useState("");
   // Owner-only "Archived" tab (MILESTONES §4): archived posts are excluded from
   // the public posts list, so the owner browses/unarchives them here.
   const [tab, setTab] = useState<"posts" | "archived">("posts");
   const [archived, setArchived] = useState<UiPost[]>([]);
   const loadArchived = () => fetchMyArchivedPosts().then(setArchived).catch((e) => console.error("archived load failed", e));
-  useEffect(() => { setTab("posts"); }, [profile?.id]);
+  useEffect(() => { setTab("posts"); setAo3Err(""); }, [profile?.id]);
   useEffect(() => { if (isMe && tab === "archived") loadArchived(); }, [isMe, tab, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the real relationship state whenever we view a different profile.
@@ -2358,12 +2359,20 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
             {!isMe && !profile.banned && <button onClick={() => setModConfirm(profile.isMod ? "demote" : "promote")} style={modBtn(t)}>{profile.isMod ? "Remove mod" : "Make mod"}</button>}
             {!isMe && !profile.isMod && <button onClick={() => setModConfirm(profile.banned ? "unban" : "ban")} style={{ ...modBtn(t), color: profile.banned ? undefined : "#e0726b" }}>{profile.banned ? "Unban" : "Ban"}</button>}
             <button
-              onClick={() => { modSetAo3Verified(profile.id, !profile.ao3Verified).then(() => onProfileChanged?.()).catch((err) => console.error("set ao3 verified failed", err)); }}
+              onClick={() => {
+                setAo3Err("");
+                modSetAo3Verified(profile.id, !profile.ao3Verified)
+                  .then(() => onProfileChanged?.())
+                  // Surface the RPC's own message: it explains *why* (e.g. the member
+                  // unlinked their AO3 account since this page loaded).
+                  .catch((e: any) => setAo3Err(e?.message || "Couldn't update AO3 verification."));
+              }}
               disabled={!profile.ao3 && !profile.ao3Verified}
               title={!profile.ao3 && !profile.ao3Verified ? "This member hasn't linked an AO3 account yet." : "Confirm the linked AO3 account belongs to this member."}
               style={{ ...modBtn(t), ...(!profile.ao3 && !profile.ao3Verified ? { color: t.muted, cursor: "not-allowed" } : {}) }}>
               <BadgeCheck size={12} /> {profile.ao3Verified ? "AO3 verified — remove" : "Mark AO3 verified"}
             </button>
+            {ao3Err && <div style={{ flexBasis: "100%", color: t.error, fontSize: 12 }}>{ao3Err}</div>}
           </div>
         )}
         {modConfirm && (
