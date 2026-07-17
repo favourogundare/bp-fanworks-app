@@ -19,6 +19,68 @@ export function avatarPartOptions(part: AvatarPart): string[] {
   return (p?.items?.enum ?? p?.enum ?? p?.default ?? []) as string[]
 }
 
+// Friendly display names for option values. Colors are raw hex in the schema
+// and some shape names are in-jokes ("theCaesar"), so those are hand-mapped;
+// everything else falls back to a camelCase → sentence-case humanizer.
+const OPTION_LABELS: Record<string, string> = {
+  // skin tones
+  '614335': 'Deep brown',
+  'ae5d29': 'Brown',
+  'd08b5b': 'Tan',
+  'edb98a': 'Light',
+  'ffdbb4': 'Pale',
+  'fd9841': 'Golden',
+  'f8d25c': 'Yellow',
+  // hair colors
+  'a55728': 'Auburn',
+  '2c1b18': 'Black',
+  'b58143': 'Blonde',
+  'd6b370': 'Golden blonde',
+  '724133': 'Brown',
+  '4a312c': 'Dark brown',
+  'f59797': 'Pastel pink',
+  'ecdcbf': 'Platinum',
+  'c93305': 'Red',
+  'e8e1e1': 'Silver gray',
+  // hair / hats
+  frida: 'Frida braids',
+  froBand: 'Fro with headband',
+  miaWallace: 'Mia Wallace bob',
+  theCaesar: 'Caesar cut',
+  theCaesarAndSidePart: 'Caesar with side part',
+  straightAndStrand: 'Straight with strand',
+  // clothing
+  graphicShirt: 'Graphic tee',
+  overall: 'Overalls',
+  shirtCrewNeck: 'Crew neck shirt',
+  shirtScoopNeck: 'Scoop neck shirt',
+  shirtVNeck: 'V-neck shirt',
+  // eyes / mouth
+  default: 'Normal',
+  hearts: 'Heart eyes',
+  side: 'Side glance',
+  winkWacky: 'Wacky wink',
+  xDizzy: 'Dizzy (X eyes)',
+  cry: 'Crying',
+  screamOpen: 'Screaming',
+}
+
+// "shortWaved" → "Short waved", "winterHat02" → "Winter hat 2"
+function humanize(value: string): string {
+  const words = value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/(\d+)/g, ' $1')
+    .trim()
+    .split(/\s+/)
+    .map((w) => (/^\d+$/.test(w) ? String(Number(w)) : w.toLowerCase()))
+  const label = words.join(' ')
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+export function avatarOptionLabel(value: string): string {
+  return OPTION_LABELS[value] ?? humanize(value)
+}
+
 // seed drives everything not explicitly picked; '' picks = fully seed-random.
 export interface AvatarConfig {
   seed: string
