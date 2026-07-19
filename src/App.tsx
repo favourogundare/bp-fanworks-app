@@ -11,7 +11,7 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, fetchCircleMembers, circleAddMember, circleSetRole, circleRemoveMember, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor, submitReport } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchHistoryPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, fetchCircleMembers, circleAddMember, circleSetRole, circleRemoveMember, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor, submitReport } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
@@ -1629,10 +1629,32 @@ function contentGrid(bp: "phone" | "tablet" | "desktop"): React.CSSProperties {
 
 // "Continue Reading" shelf: recently viewed posts from local reading history.
 // Renders nothing when tracking is off or history is empty.
+//
+// The stored entries are snapshots from view time, so they're resolved against
+// the live rows before rendering: archived and deleted posts drop out, and
+// titles/authors come from the DB so a rename doesn't leave a stale card.
+// Resolves more ids than the six cards shown, so the shelf can still fill up
+// when some of the most recent entries have dropped out.
+const HISTORY_RESOLVE = 12;
 function ContinueReading({ t, bp }: any) {
   const navigate = useNavigate();
-  const [entries, setEntries] = useState<HistoryEntry[]>(() => getHistory());
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [off, setOff] = useState(() => isTrackingOff());
+  useEffect(() => {
+    if (off) return;
+    const local = getHistory().slice(0, HISTORY_RESOLVE);
+    if (!local.length) return;
+    let live = true;
+    const seenAt = new Map(local.map((h) => [h.id, h.at]));
+    fetchHistoryPosts(local.map((h) => h.id))
+      .then((posts) => {
+        if (live) setEntries(posts.map((p) => ({ ...p, at: seenAt.get(p.id) ?? "" })));
+      })
+      // The shelf is a nice-to-have, same as the localStorage reads: if the
+      // resolve fails it stays empty rather than showing unverified entries.
+      .catch((e) => console.error("reading history resolve failed", e));
+    return () => { live = false; };
+  }, [off]);
   if (off || entries.length === 0) return null;
   const smallBtn = { background: "none", border: "none", color: t.muted, fontSize: 12, cursor: "pointer", padding: 0 } as const;
   return (

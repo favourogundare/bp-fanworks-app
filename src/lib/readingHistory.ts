@@ -1,5 +1,10 @@
 // Reading history for the "Continue Reading" shelf (MILESTONES §2).
-// localStorage only — per-device by design, no DB, nothing leaves the browser.
+// The history itself is localStorage only — per-device by design, never
+// written to the DB. It is NOT fully offline, though: the entries here are
+// snapshots taken at view time, so the shelf sends these ids to the server on
+// load (fetchHistoryPosts) to check them against current post state. That is
+// what drops archived and deleted posts from the shelf and keeps titles
+// current. The bodies never leave the browser; the ids do.
 // Users can clear it or disable tracking entirely; both survive reloads.
 
 export type HistoryEntry = {
