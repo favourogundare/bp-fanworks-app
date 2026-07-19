@@ -586,6 +586,38 @@ export async function fetchMyArchivedPosts(): Promise<UiPost[]> {
   return (data ?? []).map(mapPost)
 }
 
+/** Live state for the ids in the local reading history, in the order given.
+ *  The "Continue Reading" shelf stores snapshots taken at view time, so it
+ *  needs the current row to stay honest: ids that come back missing (deleted
+ *  or mod-removed) and archived posts are dropped, and the title/author here
+ *  are fresh, so a rename doesn't leave a stale card on the shelf.
+ *
+ *  Same archived filter as the feed/tag/search paths, with no author
+ *  exception — an author's own archived posts live in their Archived tab
+ *  (fetchMyArchivedPosts), not on the shelf.
+ *
+ *  Lean select: the shelf renders a title and a byline, nothing else. The
+ *  author embed names its FK for the reason given at POST_FIELDS. */
+export async function fetchHistoryPosts(
+  ids: string[],
+): Promise<{ id: string; title: string; author: string }[]> {
+  if (!ids.length) return []
+  const { data, error } = await supabase
+    .from('posts')
+    .select('id, title, author:profiles!posts_author_id_fkey(username)')
+    .in('id', ids)
+    .is('archived_at', null)
+  if (error) throw error
+  const order = new Map(ids.map((id, i) => [id, i]))
+  return (data ?? [])
+    .sort((a: Row, b: Row) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    .map((r: Row) => ({
+      id: r.id,
+      title: r.title,
+      author: r.author?.username ?? 'unknown',
+    }))
+}
+
 // ----- reading lists / collections (public, followable; MILESTONES §6) -----
 
 export interface UiCollection {
