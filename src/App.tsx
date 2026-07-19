@@ -786,9 +786,18 @@ function FmtToolbar({ taRef, value, onChange, t }: any) {
 // Collapse state survives comment-tree refetches (reply/edit reload remounts the
 // tree); keyed by comment id, module scope = kept while the SPA session lives.
 const collapsedComments = new Set<string>();
+// Official mod notices (distinguished + stickied, the AutoMod analog) start
+// collapsed so pinned housekeeping doesn't crowd the discussion (MILESTONES
+// §5). Seeded once per comment per session: after the member expands one, it
+// stays expanded across refetches like any other thread.
+const seededModNotices = new Set<string>();
 const countReplies = (c: any): number => (c.replies ?? []).reduce((n: number, r: any) => n + 1 + countReplies(r), 0);
 
 function Comment({ c, t, depth = 0, postId, onAdded, myUsername, onAuthor, locked, isMod }: any) {
+  if (c.distinguished && c.stickied && !seededModNotices.has(c.id)) {
+    seededModNotices.add(c.id);
+    collapsedComments.add(c.id);
+  }
   const [collapsed, setCollapsed] = useState(collapsedComments.has(c.id));
   const [reporting, setReporting] = useState(false);
   const toggleCollapsed = () => {
@@ -1811,7 +1820,10 @@ function CommentList({ comments, t, postId, onAdded, myUsername, onAuthor, locke
     if (!targetId) return -1;
     for (let i = 0; i < comments.length; i++) {
       const path = findPath(comments[i], targetId);
-      if (path) { path.forEach((n) => collapsedComments.delete(n.id)); return i; }
+      // Marking the path as seeded stops the collapsed-by-default seeding for
+      // mod notices from re-collapsing a permalinked notice (or an ancestor
+      // notice of the target) right after this expansion.
+      if (path) { path.forEach((n) => { collapsedComments.delete(n.id); seededModNotices.add(n.id); }); return i; }
     }
     return -1;
     // eslint-disable-next-line react-hooks/exhaustive-deps
