@@ -153,6 +153,7 @@ export interface UiProfile extends UiUserPreview {
   banner: string
   avatarUrl: string | null
   ao3: string | null // AO3 profile link
+  ao3Verified: boolean // a moderator confirmed the linked AO3 account (0050)
   ao3Works: string[] // featured AO3 work URLs
   kofi: string | null // Ko-fi link
   blurMedia: boolean // personal pref: blur NSFW/spoiler media

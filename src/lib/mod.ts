@@ -151,6 +151,14 @@ export async function modAssignMemberFlair(profileId: string, slug: string | nul
   if (error) throw error
 }
 
+/** Set (verified=true) or clear the mod-verified AO3 flag on a profile (0050).
+ *  Gated server-side by is_mod(); the RPC refuses if no AO3 account is linked
+ *  and writes a `verify_ao3` / `unverify_ao3` row to the mod action log (0042). */
+export async function modSetAo3Verified(profileId: string, verified: boolean): Promise<void> {
+  const { error } = await supabase.rpc('mod_set_ao3_verified', { p_profile: profileId, p_verified: verified })
+  if (error) throw error
+}
+
 // ----- saved responses (canned mod replies, MILESTONES §9) -----
 
 export interface UiSavedResponse {
