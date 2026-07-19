@@ -15,7 +15,7 @@ import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembersh
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
 import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
-import { AVATAR_PARTS, avatarPartOptions, avatarPreviewUri, buildAvatarPng, randomAvatarSeed } from "./lib/avatarBuilder";
+import { AVATAR_PARTS, avatarOptionLabel, avatarPartOptions, avatarPreviewUri, buildAvatarPng, randomAvatarSeed } from "./lib/avatarBuilder";
 import { fetchLatestTjadaka } from "./lib/tjadaka";
 import type { TjadakaPost } from "./lib/tjadaka";
 import { timeAgo } from "./lib/time";
@@ -2065,7 +2065,7 @@ function AvatarBuilderModal({ t, onClose, onBuilt }: any) {
             <select value={parts[part] ?? ""} onChange={(e) => setParts((p) => ({ ...p, [part]: e.target.value }))}
               style={{ flex: 1, background: t.bg, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 13 }}>
               <option value="">Surprise me</option>
-              {avatarPartOptions(part).map((o) => <option key={o} value={o}>{o}</option>)}
+              {avatarPartOptions(part).map((o) => <option key={o} value={o}>{avatarOptionLabel(o)}</option>)}
             </select>
           </div>
         ))}
