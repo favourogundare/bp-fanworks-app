@@ -156,6 +156,8 @@ export interface UiProfile extends UiUserPreview {
   ao3Verified: boolean // a moderator confirmed the linked AO3 account (0050)
   ao3Works: string[] // featured AO3 work URLs
   kofi: string | null // Ko-fi link
+  tumblr: string | null // Tumblr link
+  twitter: string | null // Twitter/X link
   blurMedia: boolean // personal pref: blur NSFW/spoiler media
   spoilerFree: boolean // spoiler-free mode toggle
   spoilerTags: string[] // flair slugs to hide when spoiler-free mode is on
