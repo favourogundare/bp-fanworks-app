@@ -2486,8 +2486,36 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
           </div>
           <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 14 }}>
             <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>ACHIEVEMENTS</div>
-            <div style={{ color: t.text, fontSize: 13 }}>{profile.achievements}</div>
-            <div style={{ color: t.muted, fontSize: 12, marginTop: 8 }}>{profile.unlocked} unlocked</div>
+            {/* Earned badges first (sorted in fetchProfile); locked ones stay
+                visible but dimmed, with progress in the tooltip. */}
+            {profile.achievements.length === 0
+              ? <div style={{ color: t.text, fontSize: 13 }}>No achievements yet</div>
+              : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {profile.achievements.map((a) => (
+                    <div
+                      key={a.slug}
+                      title={a.earnedAt
+                        ? `${a.name} — ${a.description} Earned ${new Date(a.earnedAt).toLocaleDateString()}.`
+                        : `${a.name} — ${a.description} Progress: ${Math.min(a.value, a.threshold)}/${a.threshold}.`}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 5,
+                        background: t.panel2, color: t.text, borderRadius: 999,
+                        padding: "5px 10px", fontSize: 12, fontWeight: 700,
+                        border: `1px solid ${a.earnedAt ? t.border : "transparent"}`,
+                        opacity: a.earnedAt ? 1 : 0.4,
+                      }}
+                    >
+                      <span aria-hidden>{a.icon}</span>{a.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            {profile.achievements.length > 0 && (
+              <div style={{ color: t.muted, fontSize: 12, marginTop: 8 }}>
+                {profile.achievements.filter((a) => a.earnedAt).length} of {profile.achievements.length} unlocked
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -147,6 +147,19 @@ export interface UiCommissionRequest {
   createdAt: string
 }
 
+// One achievement rule plus this member's standing against it (MILESTONES §8).
+// earned_at null = not unlocked yet; `value` is their current count for the
+// rule's metric, so the UI can show progress without another round-trip.
+export interface UiAchievement {
+  slug: string
+  name: string
+  description: string
+  icon: string
+  threshold: number
+  value: number
+  earnedAt: string | null
+}
+
 export interface UiProfile extends UiUserPreview {
   banned: boolean // banned from the community (mods see a chip; DB blocks their posts/comments)
   flairSlug: string | null // own member-flair slug, for the self-flair picker
@@ -166,7 +179,6 @@ export interface UiProfile extends UiUserPreview {
   karma: string
   contributions: number
   gold: number
-  achievements: string
-  unlocked: number
+  achievements: UiAchievement[] // full rule set, earned first (see sync_achievements, 0051)
   posts: UiPost[]
 }

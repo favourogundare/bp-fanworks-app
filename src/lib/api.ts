@@ -7,7 +7,7 @@
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
 import { PROFILE_THEMES } from './palettes'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
+import type { UiAchievement, UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -1265,7 +1265,7 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
   if (error) throw error
   if (!p) return null
 
-  const [postsRes, coauthoredRes, followersRes, contribRes] = await Promise.all([
+  const [postsRes, coauthoredRes, followersRes, contribRes, achvRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_FIELDS)
@@ -1290,6 +1290,9 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .from('posts')
       .select('*', { count: 'exact', head: true })
       .eq('author_id', p.id),
+    // Awards whatever this member has newly earned, then returns the whole rule
+    // set (earned + not). Idempotent — a repeat visit inserts nothing (0051).
+    supabase.rpc('sync_achievements', { p_profile: p.id }),
   ])
 
   // Merge authored + co-authored, dedup by id, keep pinned-first then newest.
@@ -1319,8 +1322,19 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
     gold: p.gold_earned ?? 0,
-    achievements: 'No achievements yet',
-    unlocked: 0,
+    // Earned badges first (stable sort keeps the DB's sort_order within each
+    // group). An empty list — RPC failure included — renders as "none yet".
+    achievements: ((achvRes.data ?? []) as Row[])
+      .map((a): UiAchievement => ({
+        slug: a.slug,
+        name: a.name,
+        description: a.description,
+        icon: a.icon,
+        threshold: a.threshold,
+        value: a.value,
+        earnedAt: a.earned_at ?? null,
+      }))
+      .sort((a, b) => Number(!!b.earnedAt) - Number(!!a.earnedAt)),
     posts: allPosts,
   }
 }
