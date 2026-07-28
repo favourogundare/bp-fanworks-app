@@ -148,16 +148,22 @@ export interface UiCommissionRequest {
 }
 
 // One achievement rule plus this member's standing against it (MILESTONES §8).
-// earned_at null = not unlocked yet; `value` is their current count for the
+// earnedAt null = not unlocked yet; `value` is their current count for the
 // rule's metric, so the UI can show progress without another round-trip.
+// A track is one ladder (poster I-IV) and tier is the rung on it.
 export interface UiAchievement {
   slug: string
   name: string
   description: string
   icon: string
+  category: string // Posting / Commenting / Karma / Community / Membership
+  track: string
+  tier: number
   threshold: number
   value: number
   earnedAt: string | null
+  pinned: boolean // shown in the member's profile trophy case (max 3)
+  isNew: boolean // awarded by the sync call that returned this row — toast it
 }
 
 export interface UiProfile extends UiUserPreview {

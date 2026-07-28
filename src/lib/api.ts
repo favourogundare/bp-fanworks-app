@@ -1322,21 +1322,69 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
     gold: p.gold_earned ?? 0,
-    // Earned badges first (stable sort keeps the DB's sort_order within each
-    // group). An empty list — RPC failure included — renders as "none yet".
-    achievements: ((achvRes.data ?? []) as Row[])
-      .map((a): UiAchievement => ({
-        slug: a.slug,
-        name: a.name,
-        description: a.description,
-        icon: a.icon,
-        threshold: a.threshold,
-        value: a.value,
-        earnedAt: a.earned_at ?? null,
-      }))
-      .sort((a, b) => Number(!!b.earnedAt) - Number(!!a.earnedAt)),
+    // Full catalog; the profile shows the trophy case, /user/x/achievements
+    // shows all of it. An empty list — RPC failure included — renders as
+    // "none yet".
+    achievements: ((achvRes.data ?? []) as Row[]).map(mapAchievement),
     posts: allPosts,
   }
+}
+
+// ----- achievements (MILESTONES §8) -----
+
+function mapAchievement(a: Row): UiAchievement {
+  return {
+    slug: a.slug,
+    name: a.name,
+    description: a.description,
+    icon: a.icon,
+    category: a.category,
+    track: a.track,
+    tier: a.tier,
+    threshold: a.threshold,
+    value: a.value,
+    earnedAt: a.earned_at ?? null,
+    pinned: !!a.pinned,
+    isNew: !!a.is_new,
+  }
+}
+
+/**
+ * The whole catalog for one member, awarding anything newly earned first.
+ * Returns null if there's no such member.
+ */
+export async function fetchAchievements(username: string): Promise<{ display: string; items: UiAchievement[] } | null> {
+  const { data: p, error } = await supabase
+    .from('profiles').select('id, username, display_name').eq('username', username).maybeSingle()
+  if (error) throw error
+  if (!p) return null
+  const { data, error: rpcError } = await supabase.rpc('sync_achievements', { p_profile: p.id })
+  if (rpcError) throw rpcError
+  return { display: p.display_name || p.username, items: ((data ?? []) as Row[]).map(mapAchievement) }
+}
+
+/**
+ * Sync the signed-in member's own badges and return the full catalog. Runs on
+ * app load, not just on the profile page — otherwise a member never learns
+ * they unlocked anything. The shell decides what's new by diffing against a
+ * stored seen-set rather than trusting is_new: any earlier sync (a profile
+ * visit, the catalog page) consumes is_new, so it can't carry the toast.
+ * Failures are swallowed: a missed toast must not break the shell.
+ */
+export async function syncMyAchievements(username: string): Promise<UiAchievement[]> {
+  try {
+    const res = await fetchAchievements(username)
+    return res?.items ?? []
+  } catch (e) {
+    console.warn('achievement sync failed', e)
+    return []
+  }
+}
+
+/** Replace my trophy case. Max 3, earned badges only — both enforced in the DB. */
+export async function setPinnedAchievements(slugs: string[]): Promise<void> {
+  const { error } = await supabase.rpc('set_pinned_achievements', { p_slugs: slugs })
+  if (error) throw error
 }
 
 // ----- post co-authors (MILESTONES §4) -----
