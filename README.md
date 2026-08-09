@@ -32,4 +32,7 @@ GitHub integration).
 
 ## Contributors
 
+- [@favourogundare](https://github.com/favourogundare)
+- [@rishii-hub](https://github.com/rishii-hub)
+- [@Zaid1287](https://github.com/Zaid1287)
 - [@maricorper](https://github.com/maricorper)
