@@ -7,7 +7,7 @@
 import { supabase } from './supabase'
 import { timeAgo, accountAge, formatCount } from './time'
 import { PROFILE_THEMES } from './palettes'
-import type { UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
+import type { UiAchievement, UiComment, UiPost, UiPinned, UiProfile, UiUserPreview, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from './types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>
@@ -1160,6 +1160,8 @@ export async function updateMyProfile(fields: {
   avatar_url?: string
   ao3_url?: string | null
   kofi_url?: string | null
+  tumblr_url?: string | null
+  twitter_url?: string | null
   ao3_works?: string[]
   blur_media?: boolean
   spoiler_free?: boolean
@@ -1173,7 +1175,7 @@ export async function updateMyProfile(fields: {
     throw new Error('Username must be 3-20 characters: letters, numbers, underscore')
   // Creator links render as hrefs on public profiles — require https to block
   // javascript:/data: URLs at the trust boundary.
-  for (const u of [fields.ao3_url, fields.kofi_url])
+  for (const u of [fields.ao3_url, fields.kofi_url, fields.tumblr_url, fields.twitter_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
   // Presets only — mirrors the profiles_profile_theme_check constraint (0027).
   if (fields.profile_theme != null && !PROFILE_THEMES[fields.profile_theme])
@@ -1259,13 +1261,13 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, ao3_verified, kofi_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at, banned_at`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, ao3_verified, kofi_url, tumblr_url, twitter_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at, banned_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
   if (!p) return null
 
-  const [postsRes, coauthoredRes, followersRes, contribRes] = await Promise.all([
+  const [postsRes, coauthoredRes, followersRes, contribRes, achvRes] = await Promise.all([
     supabase
       .from('posts')
       .select(POST_FIELDS)
@@ -1290,6 +1292,9 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
       .from('posts')
       .select('*', { count: 'exact', head: true })
       .eq('author_id', p.id),
+    // Awards whatever this member has newly earned, then returns the whole rule
+    // set (earned + not). Idempotent — a repeat visit inserts nothing (0051).
+    supabase.rpc('sync_achievements', { p_profile: p.id }),
   ])
 
   // Merge authored + co-authored, dedup by id, keep pinned-first then newest.
@@ -1309,6 +1314,8 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     ao3Verified: p.ao3_verified ?? false,
     ao3Works: p.ao3_works ?? [],
     kofi: p.kofi_url ?? null,
+    tumblr: p.tumblr_url ?? null,
+    twitter: p.twitter_url ?? null,
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
@@ -1319,10 +1326,69 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     karma: (p.karma ?? 0).toLocaleString(),
     contributions: contribRes.count ?? 0,
     gold: p.gold_earned ?? 0,
-    achievements: 'No achievements yet',
-    unlocked: 0,
+    // Full catalog; the profile shows the trophy case, /user/x/achievements
+    // shows all of it. An empty list — RPC failure included — renders as
+    // "none yet".
+    achievements: ((achvRes.data ?? []) as Row[]).map(mapAchievement),
     posts: allPosts,
   }
+}
+
+// ----- achievements (MILESTONES §8) -----
+
+function mapAchievement(a: Row): UiAchievement {
+  return {
+    slug: a.slug,
+    name: a.name,
+    description: a.description,
+    icon: a.icon,
+    category: a.category,
+    track: a.track,
+    tier: a.tier,
+    threshold: a.threshold,
+    value: a.value,
+    earnedAt: a.earned_at ?? null,
+    pinned: !!a.pinned,
+    isNew: !!a.is_new,
+  }
+}
+
+/**
+ * The whole catalog for one member, awarding anything newly earned first.
+ * Returns null if there's no such member.
+ */
+export async function fetchAchievements(username: string): Promise<{ display: string; items: UiAchievement[] } | null> {
+  const { data: p, error } = await supabase
+    .from('profiles').select('id, username, display_name').eq('username', username).maybeSingle()
+  if (error) throw error
+  if (!p) return null
+  const { data, error: rpcError } = await supabase.rpc('sync_achievements', { p_profile: p.id })
+  if (rpcError) throw rpcError
+  return { display: p.display_name || p.username, items: ((data ?? []) as Row[]).map(mapAchievement) }
+}
+
+/**
+ * Sync the signed-in member's own badges and return the full catalog. Runs on
+ * app load, not just on the profile page — otherwise a member never learns
+ * they unlocked anything. The shell decides what's new by diffing against a
+ * stored seen-set rather than trusting is_new: any earlier sync (a profile
+ * visit, the catalog page) consumes is_new, so it can't carry the toast.
+ * Failures are swallowed: a missed toast must not break the shell.
+ */
+export async function syncMyAchievements(username: string): Promise<UiAchievement[]> {
+  try {
+    const res = await fetchAchievements(username)
+    return res?.items ?? []
+  } catch (e) {
+    console.warn('achievement sync failed', e)
+    return []
+  }
+}
+
+/** Replace my trophy case. Max 3, earned badges only — both enforced in the DB. */
+export async function setPinnedAchievements(slugs: string[]): Promise<void> {
+  const { error } = await supabase.rpc('set_pinned_achievements', { p_slugs: slugs })
+  if (error) throw error
 }
 
 // ----- post co-authors (MILESTONES §4) -----
