@@ -11,9 +11,9 @@ import { useAuth } from "./auth/AuthProvider";
 import { LoginScreen } from "./auth/LoginScreen";
 import { ResetPasswordPage } from "./auth/ResetPasswordPage";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
-import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchHistoryPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, fetchCircleMembers, circleAddMember, circleSetRole, circleRemoveMember, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor, submitReport } from "./lib/api";
+import { fetchCommunityFeed, fetchCommunityStats, fetchMyMembership, setMembership, setMyMemberFlair, fetchPinned, fetchPostWithComments, fetchProfile, getMyVote, castVote, getRelationshipState, setRelationship, fetchHiddenUsernames, getMyProfileId, fetchMyIdentity, createPost, createComment, uploadMedia, updatePost, deletePost, updateComment, deleteComment, updateMyProfile, uploadAvatar, validateAvatarFile, fetchMyMutes, USERNAME_RE, fetchTagFeed, searchPosts, getMySaved, toggleSaved, fetchSavedPosts, fetchSavedComments, castPollVote, fetchPollResults, fetchNotifications, fetchUnreadCount, markAllNotificationsRead, fetchMyFollowedTags, toggleTagFollow, fetchFollowedFeed, getMyPostFollow, togglePostFollow, setProfilePin, setPostArchived, fetchMyArchivedPosts, fetchHistoryPosts, fetchMyFolders, createFolder, deleteFolder, fetchFolderMembership, toggleFolderItem, fetchCollectionsByUser, fetchCollection, fetchCollectionPosts, createCollection, deleteCollection, fetchMyCollections, fetchCollectionMembership, toggleCollectionItem, getMyCollectionFollow, toggleCollectionFollow, fetchMyPostInsights, listCommissionListings, createCommissionListing, updateCommissionListing, deleteCommissionListing, listCommissionRequests, createCommissionRequest, updateCommissionRequest, deleteCommissionRequest, fetchSidebarBookmarks, listCircles, fetchCircle, createCircle, joinCircle, leaveCircle, fetchCircleFeed, fetchCircleMembers, circleAddMember, circleSetRole, circleRemoveMember, listWikiPages, fetchWikiPage, saveWikiPage, setWikiLock, deleteWikiPage, fetchWikiRevisions, addCoauthor, removeCoauthor, submitReport, fetchAchievements, syncMyAchievements, setPinnedAchievements } from "./lib/api";
 import type { FeedSort, UiNotification, UiFolder, UiCollection, PostInsights } from "./lib/api";
-import type { UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
+import type { UiAchievement, UiPost, UiPinned, UiProfile, UiCommissionListing, UiCommissionRequest, UiBookmark, UiCircle, UiCircleMember, UiWikiPage, UiWikiPageMeta, UiWikiRevision } from "./lib/types";
 import { recordView, getHistory, clearHistory, isTrackingOff, setTrackingOff } from "./lib/readingHistory";
 import { AVATAR_PARTS, avatarOptionLabel, avatarPartOptions, avatarPreviewUri, buildAvatarPng, randomAvatarSeed } from "./lib/avatarBuilder";
 import { fetchLatestTjadaka } from "./lib/tjadaka";
@@ -2300,6 +2300,45 @@ function MemberCollections({ t, username }: any) {
   );
 }
 
+// Profile summary of the catalog: the 3 badges the member pinned, or — before
+// they've picked any — the highest rungs they've reached. The full grid lives
+// on /user/:username/achievements.
+function TrophyCase({ t, items, username }: { t: Palette; items: UiAchievement[]; username: string }) {
+  const navigate = useNavigate();
+  const earned = items.filter((a) => a.earnedAt);
+  const pinned = earned.filter((a) => a.pinned);
+  const show = (pinned.length
+    ? pinned
+    : [...earned].sort((a, b) => b.tier - a.tier || Date.parse(b.earnedAt!) - Date.parse(a.earnedAt!))
+  ).slice(0, 3);
+
+  if (items.length === 0) return <div style={{ color: t.text, fontSize: 13 }}>No achievements yet</div>;
+
+  return (
+    <>
+      {show.length === 0
+        ? <div style={{ color: t.text, fontSize: 13 }}>No achievements yet</div>
+        : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {show.map((a) => (
+              <div key={a.slug} title={`${a.name} — ${a.description} Earned ${new Date(a.earnedAt!).toLocaleDateString()}.`}
+                style={{ display: "flex", alignItems: "center", gap: 5, background: t.panel2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 700 }}>
+                <span aria-hidden>{a.icon}</span>{a.name}
+              </div>
+            ))}
+          </div>
+        )}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+        <span style={{ color: t.muted, fontSize: 12 }}>{earned.length} of {items.length} unlocked</span>
+        <button onClick={() => navigate(`/user/${username}/achievements`)}
+          style={{ background: "none", border: "none", color: t.accent, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+          View all
+        </button>
+      </div>
+    </>
+  );
+}
+
 function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, onRelationshipChange, onProfileChanged, onSavedProfile, myUsername }: any) {
   // Profile theme: layer the owner's preset accents onto the visitor's own
   // light/dark base palette. Scoped to this page — the shell stays neutral.
@@ -2494,8 +2533,7 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
           </div>
           <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 14 }}>
             <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>ACHIEVEMENTS</div>
-            <div style={{ color: t.text, fontSize: 13 }}>{profile.achievements}</div>
-            <div style={{ color: t.muted, fontSize: 12, marginTop: 8 }}>{profile.unlocked} unlocked</div>
+            <TrophyCase t={t} items={profile.achievements} username={profile.username} />
           </div>
         </div>
       </div>
@@ -2600,6 +2638,31 @@ function AppLayout() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user?.id) refreshIdentity(); }, [user?.id]);
 
+  // Achievements (§8): sync on load rather than only when the member happens to
+  // open their own profile — otherwise an unlock goes unannounced. Toast =
+  // earned set minus the per-account seen-set; is_new can't drive this because
+  // whichever sync runs first (profile visit, catalog page) consumes it. A
+  // missing seen-set seeds silently so a first load doesn't toast old badges.
+  const [newBadges, setNewBadges] = useState<UiAchievement[]>([]);
+  useEffect(() => {
+    if (!myUsername) return;
+    syncMyAchievements(myUsername).then((items) => {
+      const earned = items.filter((a) => a.earnedAt);
+      const key = `bpf-achv-seen:${myUsername}`;
+      const stored = localStorage.getItem(key);
+      localStorage.setItem(key, JSON.stringify(earned.map((a) => a.slug)));
+      if (stored === null) return;
+      const seen = new Set<string>(JSON.parse(stored));
+      const fresh = earned.filter((a) => !seen.has(a.slug));
+      if (fresh.length) setNewBadges(fresh);
+    });
+  }, [myUsername]);
+  useEffect(() => {
+    if (!newBadges.length) return;
+    const timer = setTimeout(() => setNewBadges([]), 8000);
+    return () => clearTimeout(timer);
+  }, [newBadges]);
+
   // Load the feed + pinned highlights. `foll` true = only tags you follow.
   const loadFeed = async (s: FeedSort = sort, foll: boolean = following) => {
     try {
@@ -2685,6 +2748,22 @@ function AppLayout() {
       {showCreate && <CreatePostModal t={t} initialCircleId={createCircleId} onClose={() => { setShowCreate(false); setCreateCircleId(null); setCreateDone(null); }} onCreated={() => { loadFeed(); createDone?.(); }} />}
       {showChat && <ChatDrawer t={t} target={chatTarget} onClose={() => setShowChat(false)} />}
       <UserHoverCardHost t={t} myUsername={myUsername} />
+      {/* Unlock toast (§8). Auto-dismisses; clicking opens the full catalog. */}
+      {newBadges.length > 0 && (
+        <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 60, display: "flex", flexDirection: "column", gap: 8, maxWidth: 320 }}>
+          {newBadges.map((a) => (
+            <div key={a.slug} role="status"
+              onClick={() => { setNewBadges([]); navigate(`/user/${myUsername}/achievements`); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, background: t.panel, border: `1px solid ${t.accent}`, borderRadius: 12, padding: "10px 14px", cursor: "pointer", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}>
+              <span aria-hidden style={{ fontSize: 22 }}>{a.icon}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: t.muted, fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>ACHIEVEMENT UNLOCKED</div>
+                <div style={{ color: t.text, fontSize: 14, fontWeight: 800 }}>{a.name}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
     </PrefsContext.Provider>
   );
@@ -3434,6 +3513,106 @@ function MemberRoute() {
     else load();
   };
   return <MemberPage t={c.t} profile={profile} loading={loading} isMe={!!profile && profile.username === c.myUsername} isMod={c.myIsMod} onOpen={c.goPost} onChat={c.openChatWith} onRelationshipChange={c.refreshHidden} onProfileChanged={load} onSavedProfile={onSavedProfile} myUsername={c.myUsername} />;
+}
+
+// ----- Achievements (MILESTONES §8) -----
+// The full catalog for one member: every track, every rung, grouped by
+// category. Viewing a profile already awards what's newly earned; this page
+// calls the same sync, so it's also correct when opened directly.
+function AchievementsRoute() {
+  const c: any = useOutletContext();
+  const t = c.t;
+  const { username = "" } = useParams();
+  const navigate = useNavigate();
+  const isMe = c.myUsername === username;
+  const [items, setItems] = useState<UiAchievement[]>([]);
+  const [display, setDisplay] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  const load = () => {
+    setLoading(true);
+    fetchAchievements(username)
+      .then((r) => { if (!r) { setErr("No such member."); return; } setDisplay(r.display); setItems(r.items); })
+      .catch((e) => setErr(e?.message ?? "Couldn't load achievements."))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { window.scrollTo(0, 0); load(); }, [username]);
+  useEffect(() => {
+    if (!display) return;
+    setPageMeta({ title: `Achievements — ${display} — ${community.name}`, description: `${display}'s achievements on ${community.name}.`, url: `/user/${username}/achievements`, type: "profile" });
+  }, [display, username]);
+
+  const earned = items.filter((a) => a.earnedAt);
+  const pinnedSlugs = earned.filter((a) => a.pinned).map((a) => a.slug);
+
+  const togglePin = async (slug: string) => {
+    const next = pinnedSlugs.includes(slug) ? pinnedSlugs.filter((s) => s !== slug) : [...pinnedSlugs, slug];
+    if (next.length > 3) { setErr("You can pin at most 3 achievements to your profile."); return; }
+    setErr("");
+    setItems((prev) => prev.map((a) => ({ ...a, pinned: next.includes(a.slug) })));
+    try { await setPinnedAchievements(next); } catch (e: any) { setErr(e?.message ?? "Couldn't save your pins."); load(); }
+  };
+
+  // RPC returns category-ordered, so first-seen order is the display order.
+  const categories = [...new Set(items.map((a) => a.category))];
+
+  return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px 24px" }}>
+      <div style={{ padding: "20px 0 12px" }}>
+        <button onClick={() => navigate(`/user/${username}`)} style={{ background: "none", border: "none", color: t.accent, fontSize: 13, fontWeight: 700, cursor: "pointer", padding: 0, marginBottom: 8 }}>← Back to profile</button>
+        <h1 style={{ color: t.heading, fontSize: 24, fontWeight: 800, margin: 0 }}>{isMe ? "Your achievements" : `${display || username}'s achievements`}</h1>
+        <div style={{ color: t.muted, fontSize: 13, marginTop: 4 }}>
+          {earned.length} of {items.length} unlocked{isMe ? " · pin up to 3 to your profile" : ""}
+        </div>
+      </div>
+      {err && <div style={{ color: "#e0726b", fontSize: 13, marginBottom: 12 }}>{err}</div>}
+      {loading ? (
+        <div style={{ color: t.muted, fontSize: 14, padding: "24px 0" }}>Loading…</div>
+      ) : categories.map((cat) => (
+        <div key={cat} style={{ marginBottom: 22 }}>
+          <div style={{ color: t.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.5, marginBottom: 10 }}>{cat.toUpperCase()}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+            {items.filter((a) => a.category === cat).map((a) => {
+              const pct = Math.min(100, Math.round((a.value / a.threshold) * 100));
+              return (
+                <div key={a.slug} style={{ background: t.panel, border: `1px solid ${a.pinned ? t.accent : t.border}`, borderRadius: 12, padding: 14, opacity: a.earnedAt ? 1 : 0.55 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span aria-hidden style={{ fontSize: 20 }}>{a.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: t.text, fontWeight: 800, fontSize: 14 }}>{a.name}</div>
+                      <div style={{ color: t.muted, fontSize: 11 }}>Tier {a.tier}</div>
+                    </div>
+                    {a.earnedAt
+                      ? <Check size={16} color={t.accent} />
+                      : <Lock size={14} color={t.muted} />}
+                  </div>
+                  <div style={{ color: t.muted, fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{a.description}</div>
+                  {/* Earned rows keep the bar full rather than hiding it — the
+                      row height stays stable across a category. */}
+                  <div style={{ background: t.panel2, borderRadius: 999, height: 6, marginTop: 10, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", background: a.earnedAt ? t.accent : t.muted }} />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
+                    <span style={{ color: t.muted, fontSize: 11 }}>
+                      {a.earnedAt ? `Earned ${new Date(a.earnedAt).toLocaleDateString()}` : `${Math.min(a.value, a.threshold).toLocaleString()} / ${a.threshold.toLocaleString()}`}
+                    </span>
+                    {isMe && a.earnedAt && (
+                      <button onClick={() => togglePin(a.slug)}
+                        style={{ background: "none", border: "none", color: a.pinned ? t.accent : t.muted, fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                        {a.pinned ? "Pinned" : "Pin"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ----- Circles (MILESTONES §9 Phase 1: public sub-communities) -----
@@ -4263,6 +4442,7 @@ export default function AppRoutes() {
         <Route index element={<LandingRoute />} />
         <Route path="post/:id" element={<PostRoute />} />
         <Route path="user/:username" element={<MemberRoute />} />
+        <Route path="user/:username/achievements" element={<AchievementsRoute />} />
         <Route path="t/:slug" element={<TagRoute />} />
         <Route path="list/:id" element={<CollectionRoute />} />
         <Route path="search" element={<SearchRoute />} />
