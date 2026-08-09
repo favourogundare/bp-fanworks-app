@@ -5,6 +5,12 @@ backed by Supabase, deployed on Vercel).
 
 Live: https://blackpantherfanworks.com
 
+## Demo
+
+| Sign in | Community landing | Post & discussion |
+| --- | --- | --- |
+| ![Sign-in screen](demo/00-Demo-Sign-In.png) | ![Community landing page](demo/01-Demo-Landing.png) | ![Post detail with comments](demo/03-Demo-Post.png) |
+
 ## Develop
 
 ```bash
