@@ -2112,6 +2112,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const addWork = () => setAo3Works((p) => [...p, ""]);
   const removeWork = (i: number) => setAo3Works((p) => p.filter((_, j) => j !== i));
   const [kofi, setKofi] = useState(profile.kofi || "");
+  const [tumblr, setTumblr] = useState(profile.tumblr || "");
+  const [twitter, setTwitter] = useState(profile.twitter || "");
   const [flairSlug, setFlairSlug] = useState<string | null>(profile.flairSlug ?? null);
   const [profileTheme, setProfileTheme] = useState<string | null>(profile.profileTheme ?? null);
   const { mode } = useTheme(); // for theme-swatch colors in the picker
@@ -2139,7 +2141,7 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
   const save = async () => {
     setErr("");
     if (!USERNAME_RE.test(username)) { setErr("Username must be 3-20 characters: letters, numbers, underscore."); return; }
-    for (const u of [ao3, kofi, ...ao3Works]) if (u.trim() && !/^https:\/\//i.test(u.trim())) { setErr("Links must start with https://"); return; }
+    for (const u of [ao3, kofi, tumblr, twitter, ...ao3Works]) if (u.trim() && !/^https:\/\//i.test(u.trim())) { setErr("Links must start with https://"); return; }
     setBusy(true);
     try {
       const patch: any = {};
@@ -2148,6 +2150,8 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       if (banner !== profile.banner) patch.banner = banner;
       if ((ao3 || null) !== profile.ao3) patch.ao3_url = ao3 || null;
       if ((kofi || null) !== profile.kofi) patch.kofi_url = kofi || null;
+      if ((tumblr || null) !== profile.tumblr) patch.tumblr_url = tumblr || null;
+      if ((twitter || null) !== profile.twitter) patch.twitter_url = twitter || null;
       const cleanWorks = ao3Works.map((w) => w.trim()).filter(Boolean);
       if (JSON.stringify(cleanWorks) !== JSON.stringify(profile.ao3Works || [])) patch.ao3_works = cleanWorks;
       if (blur !== profile.blurMedia) patch.blur_media = blur;
@@ -2212,6 +2216,10 @@ function ProfileEditPanel({ t, profile, onClose, onSaved, onHiddenChange }: any)
       <button type="button" onClick={addWork} style={{ background: "none", border: "none", color: t.link, cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>+ Add work</button>
       <label style={label}>KO-FI LINK</label>
       <input style={field} placeholder="https://ko-fi.com/…" value={kofi} onChange={(e) => setKofi(e.target.value)} />
+      <label style={label}>TUMBLR LINK</label>
+      <input style={field} placeholder="https://www.tumblr.com/…" value={tumblr} onChange={(e) => setTumblr(e.target.value)} />
+      <label style={label}>TWITTER/X LINK</label>
+      <input style={field} placeholder="https://x.com/…" value={twitter} onChange={(e) => setTwitter(e.target.value)} />
       <label style={label}>MEMBER FLAIR</label>
       <select style={{ ...field, cursor: "pointer" }} value={flairSlug ?? ""} onChange={(e) => setFlairSlug(e.target.value || null)}>
         <option value="">— no flair —</option>
@@ -2456,7 +2464,7 @@ function MemberPage({ t: baseT, profile, loading, isMe, isMod, onOpen, onChat, o
           </div>
           <button style={{ display: "flex", alignItems: "center", gap: 6, background: t.panel2, color: t.text, border: "none", borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 13, marginBottom: 14 }}><Share2 size={14} /> Share</button>
           {/* Creator links: validated https-only at save; re-checked here before rendering as hrefs. */}
-          {[["AO3", profile.ao3], ["Ko-fi", profile.kofi]].filter(([, u]) => u && /^https:\/\//i.test(u)).map(([name, u]) => (
+          {[["AO3", profile.ao3], ["Ko-fi", profile.kofi], ["Tumblr", profile.tumblr], ["Twitter/X", profile.twitter]].filter(([, u]) => u && /^https:\/\//i.test(u)).map(([name, u]) => (
             <a key={name} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, color: t.accent, fontSize: 13, fontWeight: 700, textDecoration: "none", marginBottom: 8 }}>
               <ExternalLink size={13} /> {name}
               {name === "AO3" && profile.ao3Verified && (

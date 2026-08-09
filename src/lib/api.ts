@@ -1160,6 +1160,8 @@ export async function updateMyProfile(fields: {
   avatar_url?: string
   ao3_url?: string | null
   kofi_url?: string | null
+  tumblr_url?: string | null
+  twitter_url?: string | null
   ao3_works?: string[]
   blur_media?: boolean
   spoiler_free?: boolean
@@ -1173,7 +1175,7 @@ export async function updateMyProfile(fields: {
     throw new Error('Username must be 3-20 characters: letters, numbers, underscore')
   // Creator links render as hrefs on public profiles — require https to block
   // javascript:/data: URLs at the trust boundary.
-  for (const u of [fields.ao3_url, fields.kofi_url])
+  for (const u of [fields.ao3_url, fields.kofi_url, fields.tumblr_url, fields.twitter_url])
     if (u && !/^https:\/\//i.test(u)) throw new Error('Links must start with https://')
   // Presets only — mirrors the profiles_profile_theme_check constraint (0027).
   if (fields.profile_theme != null && !PROFILE_THEMES[fields.profile_theme])
@@ -1259,7 +1261,7 @@ export async function fetchMyMutes(): Promise<{ id: string; username: string; ty
 export async function fetchProfile(username: string): Promise<UiProfile | null> {
   const { data: p, error } = await supabase
     .from('profiles')
-    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, ao3_verified, kofi_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at, banned_at`)
+    .select(`${PROFILE_CORE_FIELDS}, karma, gold_earned, banner, avatar_url, ao3_url, ao3_verified, kofi_url, tumblr_url, twitter_url, ao3_works, blur_media, spoiler_free, spoiler_tags, muted_tags, profile_theme, username_changed_at, banned_at`)
     .eq('username', username)
     .maybeSingle()
   if (error) throw error
@@ -1309,6 +1311,8 @@ export async function fetchProfile(username: string): Promise<UiProfile | null> 
     ao3Verified: p.ao3_verified ?? false,
     ao3Works: p.ao3_works ?? [],
     kofi: p.kofi_url ?? null,
+    tumblr: p.tumblr_url ?? null,
+    twitter: p.twitter_url ?? null,
     blurMedia: p.blur_media ?? true,
     spoilerFree: p.spoiler_free ?? false,
     spoilerTags: p.spoiler_tags ?? [],
